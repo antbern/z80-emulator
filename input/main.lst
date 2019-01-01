@@ -1,0 +1,1404 @@
+0001   0000             ; inspiration (with many others): https://github.com/lmaurits/lm512
+0002   0000             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0003   0000             ;;           CONSTANTS            ;;
+0004   0000             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0005   0000             LED_PORT		.EQU	$00
+0006   0000             
+0007   0000             
+0008   0000             BOTTOM_OF_STACK	.EQU 	$2000	; "top" stack adress at 4 KB
+0009   0000             
+0010   0000             BOOT_FLAG_WARM	.EQU	$AA
+0011   0000             
+0012   0000             #INCLUDE	"constants.asm"
+0001+  0000             #IFNDEF	CONSTANTS
+0002+  0000             #DEFINE	CONSTANTS
+0003+  0000             
+0004+  0000             EOS					.EQU	$00		; End Of String
+0005+  0000             CR					.EQU	$0d		; Carriage Return (ENTER)
+0006+  0000             LF					.EQU	$0a		; Line Feed
+0007+  0000             SPACE				.EQU	$20		; Space
+0008+  0000             TAB					.EQU	$09		; Tabulator
+0009+  0000             
+0010+  0000             #ENDIF
+0013   0000             
+0014   0000             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0015   0000             ;;             CODE               ;;
+0016   0000             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0017   0000             
+0018   0000             ; Excecution starts here
+0019   0000             				.ORG $0000
+0020   0000 F3          				DI									; disable interrupts
+0021   0001 18 30       				jr		initialize					; skip reset vector(s)
+0022   0003             				
+0023   0003             ;;;;;;;;;; AREA FOR RESET VECTORS AND SO ON HERE ;;;;;;;;;;;;
+0024   0030             				.ORG 	$0030
+0025   0030 C3 68 00    rst30:			jp		monitor_enter				; breakpoint reset vector
+0026   0033             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0027   0033             
+0028   0033 31 00 20    initialize:		ld 		sp, BOTTOM_OF_STACK			; set up stack pointer 
+0029   0036             				
+0030   0036 CD C1 04    				call	sio_init					; initialize serial communication
+0031   0039             				
+0032   0039 21 D8 05    				ld		HL, str_init				; print welcome message
+0033   003C CD 02 05    				call	print_string
+0034   003F             				
+0035   003F             				; cold/warm start
+0036   003F 21 44 07    				ld		hl, boot_flag
+0037   0042 7E          				ld		a, (hl)						; load boot_flag contents into A register
+0038   0043 FE AA       				cp		BOOT_FLAG_WARM
+0039   0045 21 BA 05    				ld		hl,	str_warm_boot
+0040   0048 CC 02 05    				call	z, print_string				; if this is warm boot, print string
+0041   004B CA 9B 00    				jp		z, main_command_loop		; if this is warm boot, skip to main
+0042   004E             				
+0043   004E             				
+0044   004E 21 C9 05    				ld		hl, str_cold_boot			; print cold boot message
+0045   0051 CD 02 05    				call	print_string
+0046   0054             				
+0047   0054             				; clear RAM
+0048   0054 21 00 0A    				ld		hl, END_OF_PROGRAM			; load hl with starting point of area to be cleared
+0049   0057 11 01 0A    				ld		de, END_OF_PROGRAM + 1		; load de with starting point of area to be cleared + 1
+0050   005A 01 FF 75    				ld		bc,	$7fff - END_OF_PROGRAM  ; bc holds number of bytes to clear (NO parantesis since this is another command!!)
+0051   005D 36 00       				ld		(hl), $00					; load the first byte with 0
+0052   005F ED B0       				ldir								;d do (DE)<-(HL); HL++, DE++, until BC == 0. Since HL is one byte behind DE, zeroes will be copied one byte forward untill all of memory is cleared
+0053   0061             				
+0054   0061 21 44 07    				ld		hl, boot_flag				; set the boot flag
+0055   0064 36 AA       				ld		(hl), BOOT_FLAG_WARM
+0056   0066             
+0057   0066 18 33       				jr		main_command_loop			; enter main command line	
+0058   0068             
+0059   0068             
+0060   0068             ; monitor program starts here
+0061   0068             ; monitor_enter - saves all the registers to a special area in ram
+0062   0068 ED 73 FD 07 monitor_enter:	ld		(mon_stack_backup), SP	; backup stack pointer
+0063   006C             
+0064   006C             				; Save all registers
+0065   006C 31 FB 07    				ld		SP, mon_reg_stack + 1;
+0066   006F             
+0067   006F F5          				push	af
+0068   0070 C5          				push	bc
+0069   0071 D5          				push	de
+0070   0072 E5          				push	hl
+0071   0073 08          				ex		af,af'					; swap registers
+0072   0074 D9          				exx	
+0073   0075             
+0074   0075 F5          				push	af
+0075   0076 C5          				push	bc
+0076   0077 D5          				push	de
+0077   0078 E5          				push	hl
+0078   0079 08          				ex		af,af'					; swap registers again
+0079   007A D9          				exx	
+0080   007B             
+0081   007B DD E5       				push	ix						; save ix and iy
+0082   007D FD E5       				push	iy
+0083   007F             
+0084   007F             				
+0085   007F             				
+0086   007F ED 7B FD 07 				ld		SP, (mon_stack_backup)	; restore original stack pointer
+0087   0083             
+0088   0083 E1          				pop		hl						; pop return address to hl
+0089   0084 E5          				push	hl						; push return address again
+0090   0085             
+0091   0085 22 FB 07    				ld		(mon_reg_rtn_addr), hl	; save return address in variable
+0092   0088             
+0093   0088             				; DO REAL STUFF HERE!!! WE ARE IN A SAFE ENVIRONMENT
+0094   0088             				
+0095   0088 CD 26 01    				call	dump_registers
+0096   008B             
+0097   008B 21 DE 00    				ld		hl, str_mon_cont
+0098   008E CD 02 05    				call	print_string
+0099   0091 CD EF 04    				call	getc					; wait for a character
+0100   0094 CD A5 04    				call	to_upper
+0101   0097 FE 4D       				cp		'M'
+0102   0099 20 27       				jr		NZ, monitor_leave
+0103   009B             
+0104   009B             main_command_loop:			
+0105   009B             
+0106   009B CD F5 04    				call	print_newline
+0107   009E 3E 3E       				ld		a, '>'					; print command prompt
+0108   00A0 CD E9 04    				call	putc
+0109   00A3             
+0110   00A3 21 66 07    				ld		hl, str_buffer			; hl points to start of string buffer
+0111   00A6 CD FC 03    				call	read_line				; read input line
+0112   00A9             
+0113   00A9 7E          				ld		a, (hl)					; if command line is empty, just skip
+0114   00AA FE 00       				cp		EOS
+0115   00AC 28 ED       				jr		Z, main_command_loop
+0116   00AE             
+0117   00AE CD F5 04    				call	print_newline		
+0118   00B1             				
+0119   00B1 01 45 07    				ld		bc, argc				; load pointer to argc/argv array
+0120   00B4 CD C6 01    				call	parse_line				; parse entered command line string
+0121   00B7             
+0122   00B7 DD 21 59 02 				ld		ix, command_table		; pointer to command table	
+0123   00BB 06 0A       				ld		b, command_table_entries	; load b with number of entries to test (this is precalculated in the assembler)
+0124   00BD CD E8 01    				call	excecute_command		; excecute the command
+0125   00C0             
+0126   00C0 18 D9       				jr		main_command_loop		; do it again
+0127   00C2             
+0128   00C2             
+0129   00C2             				;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0130   00C2             ; monitor_leave - restores all registers and returns to original caller, effectively leaves "monitor" mode
+0131   00C2             monitor_leave:
+0132   00C2 ED 73 FD 07 				ld		(mon_stack_backup), SP	; backup stack pointer
+0133   00C6             
+0134   00C6             				; Restore all registers
+0135   00C6 31 E7 07    				ld		SP, mon_reg_stack - (20-1); set stack pointer to start at the bottom of our saved registers stack
+0136   00C9             
+0137   00C9 FD E1       				pop		iy						; restore iy and ix
+0138   00CB DD E1       				pop		ix
+0139   00CD             
+0140   00CD 08          				ex		af,af'					; swap registers
+0141   00CE D9          				exx	
+0142   00CF E1          				pop		hl
+0143   00D0 D1          				pop		de
+0144   00D1 C1          				pop		bc
+0145   00D2 F1          				pop		af
+0146   00D3             
+0147   00D3 08          				ex		af,af'					; swap registers again
+0148   00D4 D9          				exx	
+0149   00D5 E1          				pop		hl
+0150   00D6 D1          				pop		de
+0151   00D7 C1          				pop		bc
+0152   00D8 F1          				pop		af							
+0153   00D9             				
+0154   00D9 ED 7B FD 07 				ld		SP, (mon_stack_backup)	; restore stack pointer
+0155   00DD C9          				ret								; return!
+0156   00DE             
+0157   00DE 50 72 65 73 str_mon_cont:	.db		"Press m to re-enter monitor, or any other key to continue excecution.", CR, LF, EOS
+0157   00E2 73 20 6D 20 
+0157   00E6 74 6F 20 72 
+0157   00EA 65 2D 65 6E 
+0157   00EE 74 65 72 20 
+0157   00F2 6D 6F 6E 69 
+0157   00F6 74 6F 72 2C 
+0157   00FA 20 6F 72 20 
+0157   00FE 61 6E 79 20 
+0157   0102 6F 74 68 65 
+0157   0106 72 20 6B 65 
+0157   010A 79 20 74 6F 
+0157   010E 20 63 6F 6E 
+0157   0112 74 69 6E 75 
+0157   0116 65 20 65 78 
+0157   011A 63 65 63 75 
+0157   011E 74 69 6F 6E 
+0157   0122 2E 0D 0A 00 
+0158   0126             
+0159   0126             ; dump_registers - prints the contents of the stored register stack in a nice format
+0160   0126             dump_registers:	
+0161   0126 21 7D 01    				ld		hl, str_regdump_pc		; print pc string
+0162   0129 CD 02 05    				call	print_string
+0163   012C 2A FB 07    				ld		hl, (mon_reg_rtn_addr)	; print return address
+0164   012F 2B          				dec		hl						; will now point at the rst instruction
+0165   0130 CD 63 05    				call	print_word
+0166   0133 CD F5 04    				call	print_newline
+0167   0136 CD F5 04    				call	print_newline
+0168   0139             
+0169   0139 11 FA 07    				ld		de, mon_reg_stack		; pointer to saved registers
+0170   013C             
+0171   013C 21 88 01    				ld		hl, str_regdump			; print header for normal registers
+0172   013F CD 02 05    				call	print_string
+0173   0142 06 08       				ld		b, 8					; dump 8 registers
+0174   0144 CD 70 01    				call	dump_registers_loop
+0175   0147 CD F5 04    				call	print_newline
+0176   014A CD F5 04    				call	print_newline
+0177   014D             
+0178   014D 21 A1 01    				ld		hl, str_regdump_alt		; print header for alterative registers
+0179   0150 CD 02 05    				call	print_string
+0180   0153 06 08       				ld		b, 8					; dump 8 registers
+0181   0155 CD 70 01    				call	dump_registers_loop
+0182   0158 CD F5 04    				call	print_newline
+0183   015B CD F5 04    				call	print_newline
+0184   015E             
+0185   015E 21 BB 01    				ld		hl, str_regdump_index	; print header for index registers
+0186   0161 CD 02 05    				call	print_string
+0187   0164 06 04       				ld		b, 4					; dump 4 registers
+0188   0166 CD 70 01    				call	dump_registers_loop
+0189   0169 CD F5 04    				call	print_newline
+0190   016C CD F5 04    				call	print_newline
+0191   016F             
+0192   016F C9          				ret								; return
+0193   0170             
+0194   0170             dump_registers_loop:
+0195   0170 1A          				ld		a, (de)					; load byte for next register
+0196   0171 1B          				dec		de						; move to next
+0197   0172 CD 52 05    				call	print_byte				; print byte
+0198   0175 3E 20       				ld		a, SPACE
+0199   0177 CD E9 04    				call	putc
+0200   017A 10 F4       				djnz	dump_registers_loop
+0201   017C             
+0202   017C C9          				ret
+0203   017D             
+0204   017D 42 52 45 41 str_regdump_pc:		.db		"BREAK @ 0x", EOS ;
+0204   0181 4B 20 40 20 
+0204   0185 30 78 00 
+0205   0188 41 20 20 46 str_regdump:		.db		"A  F  B  C  D  E  H  L", CR, LF, EOS
+0205   018C 20 20 42 20 
+0205   0190 20 43 20 20 
+0205   0194 44 20 20 45 
+0205   0198 20 20 48 20 
+0205   019C 20 4C 0D 0A 
+0205   01A0 00 
+0206   01A1 41 27 20 46 str_regdump_alt:	.db		"A' F' B' C' D' E' H' L'", CR, LF, EOS
+0206   01A5 27 20 42 27 
+0206   01A9 20 43 27 20 
+0206   01AD 44 27 20 45 
+0206   01B1 27 20 48 27 
+0206   01B5 20 4C 27 0D 
+0206   01B9 0A 00 
+0207   01BB 49 58 20 20 str_regdump_index:	.db		"IX    IY", CR, LF, EOS
+0207   01BF 20 20 49 59 
+0207   01C3 0D 0A 00 
+0208   01C6             
+0209   01C6             
+0210   01C6             #INCLUDE	"cli.asm"
+0001+  01C6             #IFNDEF		CLI
+0002+  01C6             #DEFINE		CLI
+0003+  01C6             
+0004+  01C6             
+0005+  01C6             ; parse_line - parses the command line, counting the number of arguments (space separated) 
+0006+  01C6             ; and stores poiters to them in the array pointed to by BC (argc(count)/argv(pointers to all arguments)). 
+0007+  01C6             ; HL is a pointer to the string
+0008+  01C6             ; affects: none
+0009+  01C6             parse_line:		
+0010+  01C6 E5          				push	hl						; save hl
+0011+  01C7 C5          				push	bc						; save original bc
+0012+  01C8             
+0013+  01C8 03          				inc		bc						; BC now points to argv array
+0014+  01C9             
+0015+  01C9 3E 00       				ld		a, 0
+0016+  01CB F5          				push	af						; counter on stack
+0017+  01CC             
+0018+  01CC CD 2D 04    				call	str_next_token			; read command name
+0019+  01CF             parse_line_loop:
+0020+  01CF FE 00       				cp		EOS						; last character was EOS?
+0021+  01D1 28 10       				jr		Z, parse_line_ret	; YES - exit
+0022+  01D3             
+0023+  01D3             				; increment count
+0024+  01D3 F1          				pop		af
+0025+  01D4 3C          				inc		a
+0026+  01D5 F5          				push	af
+0027+  01D6             
+0028+  01D6             				; store pointer to next token (contained in DE now because of str_next_token)
+0029+  01D6 7B          				ld		a, e
+0030+  01D7 02          				ld		(bc), a					; store E first (little endian)
+0031+  01D8 03          				inc		bc
+0032+  01D9             
+0033+  01D9 7A          				ld		a, d				
+0034+  01DA 02          				ld		(bc), a					; store D
+0035+  01DB 03          				inc 	bc		
+0036+  01DC             
+0037+  01DC             				; move DE into HL (for str_next_token)
+0038+  01DC 62          				ld		h, d
+0039+  01DD 6B          				ld		l, e
+0040+  01DE             				
+0041+  01DE CD 2D 04    				call	str_next_token			; check next token
+0042+  01E1             				
+0043+  01E1 18 EC       				jr		parse_line_loop
+0044+  01E3             
+0045+  01E3             parse_line_ret:
+0046+  01E3 F1          				pop		af
+0047+  01E4 C1          				pop		bc						; restore bc to point to argc
+0048+  01E5 02          				ld		(bc), a					; store count in argc
+0049+  01E6             
+0050+  01E6 E1          				pop		hl						; restore hl
+0051+  01E7 C9          				ret
+0052+  01E8             
+0053+  01E8             
+0054+  01E8             
+0055+  01E8             ; excecute_command - processes a command from the strig given in HL, IX should point to start of the command table and B contain the number of commands
+0056+  01E8             ; affects: AF, HL, DE, B
+0057+  01E8             ; arguments: HL - pointer to string with command name
+0058+  01E8             ; returns: none
+0059+  01E8             excecute_command:
+0060+  01E8 DD 5E 00    				ld		e, (IX)					; load the address to the command string
+0061+  01EB DD 56 01    				ld		d, (IX+1)
+0062+  01EE             
+0063+  01EE             				
+0064+  01EE CD AE 04    				call	str_cmp					; compare the current command string with the entered command
+0065+  01F1 38 13       				jr		C, excecute_command_found	; there is a match!
+0066+  01F3             
+0067+  01F3 11 04 00    				ld		de, 4					; do IX += 4
+0068+  01F6 DD 19       				add		IX, de
+0069+  01F8             
+0070+  01F8 10 EE       				djnz	excecute_command    	; go through all entries, if we fall through here, no command was found :/
+0071+  01FA             
+0072+  01FA E5          				push	hl						; print command not found message
+0073+  01FB 21 0D 02    				ld		hl, str_unrec_cmd
+0074+  01FE CD 02 05    				call	print_string
+0075+  0201 E1          				pop		hl
+0076+  0202 CD 02 05    				call	print_string
+0077+  0205             				
+0078+  0205 C9          				ret								; return
+0079+  0206             
+0080+  0206             excecute_command_found:
+0081+  0206 DD 6E 02    				ld		l, (IX+2)				; load address of command to excecute
+0082+  0209 DD 66 03    				ld		h, (IX+3)
+0083+  020C E9          				jp		(hl)					; continue excecution at command
+0084+  020D             				
+0085+  020D             
+0086+  020D 55 6E 72 65 str_unrec_cmd:	.db		"Unrecognized command: ", EOS
+0086+  0211 63 6F 67 6E 
+0086+  0215 69 7A 65 64 
+0086+  0219 20 63 6F 6D 
+0086+  021D 6D 61 6E 64 
+0086+  0221 3A 20 00 
+0087+  0224             
+0088+  0224             
+0089+  0224             
+0090+  0224             #ENDIF0211   0224             #INCLUDE	"commands.asm"
+0001+  0224             ; TABLE OF COMMANDS, holds pointer to string, and address
+0002+  0224 64 75 6D 70 str_cmd_dump 	.db		"dump", EOS
+0002+  0228 00 
+0003+  0229 72 73 74 00 str_cmd_rst		.db		"rst", EOS
+0004+  022D 74 65 73 74 str_cmd_test	.db		"test", EOS
+0004+  0231 00 
+0005+  0232 68 65 6C 70 str_cmd_help	.db		"help", EOS
+0005+  0236 00 
+0006+  0237 62 72 65 61 str_cmd_breaktest .db	"break", EOS
+0006+  023B 6B 00 
+0007+  023D 63 6F 6E 74 str_cmd_continue .db	"cont", EOS
+0007+  0241 00 
+0008+  0242 72 65 67 00 str_cmd_reg		.db		"reg", EOS
+0009+  0246 63 66 69 6E str_cmd_cf_init .db		"cfinit", EOS
+0009+  024A 69 74 00 
+0010+  024D 63 66 69 64 str_cmd_cf_id	.db		"cfid", EOS
+0010+  0251 00 
+0011+  0252 63 66 72 65 str_cmd_cf_read .db		"cfread", EOS
+0011+  0256 61 64 00 
+0012+  0259             
+0013+  0259 32 02 81 02 command_table:	.dw		str_cmd_help, cmd_help
+0014+  025D 24 02 88 02 				.dw		str_cmd_dump, cmd_dump	; dump command
+0015+  0261 29 02 54 03 				.dw		str_cmd_rst, cmd_reset	; reset command
+0016+  0265 3D 02 BB 03 				.dw		str_cmd_continue, cmd_continue
+0017+  0269 2D 02 E9 03 				.dw		str_cmd_test, cmd_test	; test command
+0018+  026D 37 02 BF 03 				.dw		str_cmd_breaktest, cmd_breaktest ; breaktest command
+0019+  0271 42 02 26 01 				.dw		str_cmd_reg, dump_registers ; dump registers command
+0020+  0275 46 02 70 05 				.dw		str_cmd_cf_init, cf_init
+0021+  0279 4D 02 C8 03 				.dw 	str_cmd_cf_id, cmd_cf_id
+0022+  027D 52 02 D9 03 				.dw		str_cmd_cf_read, cmd_cf_read
+0023+  0281             command_table_entries	.EQU	($ - command_table) / (2*2)	; calculate size using bytes
+0024+  0281             
+0025+  0281             
+0026+  0281             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0027+  0281             ; cmd_help - prints the help info for the user				
+0028+  0281 21 05 06    cmd_help:		ld		hl, str_commands
+0029+  0284 CD 02 05    				call	print_string
+0030+  0287 C9          				ret
+0031+  0288             
+0032+  0288             
+0033+  0288             
+0034+  0288             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0035+  0288             ; cmd_dump - parses command line for a start and end address and then calls the dump_memory function to dump the data
+0036+  0288 3A 45 07    cmd_dump:		ld		a, (argc)				; load number of arguments
+0037+  028B FE 02       				cp		2
+0038+  028D 20 16       				jr		nz, cmd_dump_err		; if there are not 2 arguments, print error message
+0039+  028F             
+0040+  028F 2A 46 07    				ld		hl, (argv)				; first argument
+0041+  0292 CD 71 04    				call	str_parse_word
+0042+  0295 30 0E       				jr		nc, cmd_dump_err
+0043+  0297 D5          				push	de
+0044+  0298             
+0045+  0298 2A 48 07    				ld		hl, (argv + 2)			; second argumend
+0046+  029B CD 71 04    				call	str_parse_word
+0047+  029E 30 05       				jr		nc, cmd_dump_err
+0048+  02A0             ;// TODO: fix uneeven push/pop caused by invalid arguments				
+0049+  02A0 E1          				pop		hl
+0050+  02A1 CD C8 02    				call	dump_memory
+0051+  02A4 C9          				ret
+0052+  02A5             
+0053+  02A5 21 AC 02    cmd_dump_err:	ld		hl, str_cmd_dump_err
+0054+  02A8 CD 02 05    				call	print_string
+0055+  02AB C9          				ret
+0056+  02AC             
+0057+  02AC 55 73 61 67 str_cmd_dump_err .db	"Usage: dump <START> <END>", CR, LF, EOS
+0057+  02B0 65 3A 20 64 
+0057+  02B4 75 6D 70 20 
+0057+  02B8 3C 53 54 41 
+0057+  02BC 52 54 3E 20 
+0057+  02C0 3C 45 4E 44 
+0057+  02C4 3E 0D 0A 00 
+0058+  02C8             
+0059+  02C8             ; dump_memory: prints a nice table of the memory contents starting at address HL and ending at address DE (rounded up to closest multiple of 16)
+0060+  02C8             ; affects: none
+0061+  02C8             dump_memory:
+0062+  02C8 E5          				push	hl						; save registers
+0063+  02C9 D5          				push	de
+0064+  02CA F5          				push	af
+0065+  02CB             				
+0066+  02CB 7D          				ld		a, l					; align start address in HL to 16 byte chunks (rounds down)
+0067+  02CC E6 F0       				and		$f0
+0068+  02CE 6F          				ld		l, a
+0069+  02CF             				
+0070+  02CF 13          				inc		de						; to include DE if it happens to be a multiple of 16 (prints one extra line in that case)
+0071+  02D0             				
+0072+  02D0 E5          				push	hl						; save start address
+0073+  02D1 21 1A 03    				ld		hl, dump_memory_header	; print header
+0074+  02D4 CD 02 05    				call	print_string
+0075+  02D7             
+0076+  02D7 E1          				pop		hl						; restore start address
+0077+  02D8             				
+0078+  02D8 CD 63 05    row_loop:		call	print_word				; print the starting address
+0079+  02DB 3E 20       				ld		a, SPACE
+0080+  02DD             				
+0081+  02DD CD E9 04    				call	putc					; print space
+0082+  02E0 CD E9 04    				call	putc
+0083+  02E3             				
+0084+  02E3 E5          				push	hl						; store the value of HL
+0085+  02E4 06 10       				ld		b, 16					; load 16 into b register 
+0086+  02E6 7E          byte_loop:		ld		a, (HL)					; load byte at (HL)
+0087+  02E7 CD 52 05    				call	print_byte				; print it
+0088+  02EA             				
+0089+  02EA 3E 20       				ld		a, SPACE				; print a space
+0090+  02EC CD E9 04    				call 	putc
+0091+  02EF             				
+0092+  02EF 23          				inc		HL						; HL now points to the next byte in memory
+0093+  02F0             				
+0094+  02F0 10 F4       				djnz	byte_loop				; do this B times (16)
+0095+  02F2             				
+0096+  02F2             				
+0097+  02F2 3E 7C       				ld		a, '|'					; print a '|'
+0098+  02F4 CD E9 04    				call	putc
+0099+  02F7             				
+0100+  02F7 06 10       				ld		b, 16					; load 16 into b register	
+0101+  02F9             				
+0102+  02F9 E1          				pop		hl						; restore the value of HL
+0103+  02FA 7E          ascii_loop:		ld		a, (HL)					; load byte at (HL)
+0104+  02FB FE 20       				cp		SPACE					; is this a valid (>= 20 <=> no control character) character? 
+0105+  02FD 30 02       				jr		nc, ascii_loop_1		; yes
+0106+  02FF 3E 2E       				ld		a, '.'					; no - print '.' instead
+0107+  0301 CD E9 04    ascii_loop_1:	call	putc					; print character
+0108+  0304             				
+0109+  0304 23          				inc		HL						; HL now points to the next byte in memory
+0110+  0305 10 F3       				djnz	ascii_loop				; do this B times (16)
+0111+  0307             				
+0112+  0307 3E 7C       				ld		a, '|'					; print a '|'
+0113+  0309 CD E9 04    				call	putc
+0114+  030C             				
+0115+  030C CD F5 04    				call	print_newline
+0116+  030F             				
+0117+  030F             				; check to do this until de >= hl
+0118+  030F E5          				push	hl						; save hl
+0119+  0310 A7          				and		a						; reset carry flag
+0120+  0311 ED 52       				sbc		hl, de					; do HL - DE, carry inticates DE > HL
+0121+  0313 E1          				pop		hl						; restore hl since the above modifies it
+0122+  0314 38 C2       				jr		c, row_loop				; if DE > HL, do next row
+0123+  0316             				
+0124+  0316 F1          				pop		af						; restore registers
+0125+  0317 D1          				pop		de
+0126+  0318 E1          				pop		hl
+0127+  0319 C9          				ret
+0128+  031A             				
+0129+  031A             				
+0130+  031A             dump_memory_header:
+0131+  031A 20 20 20 20 				.DB		"      00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F", CR, LF, CR, LF, EOS
+0131+  031E 20 20 30 30 
+0131+  0322 20 30 31 20 
+0131+  0326 30 32 20 30 
+0131+  032A 33 20 30 34 
+0131+  032E 20 30 35 20 
+0131+  0332 30 36 20 30 
+0131+  0336 37 20 30 38 
+0131+  033A 20 30 39 20 
+0131+  033E 30 41 20 30 
+0131+  0342 42 20 30 43 
+0131+  0346 20 30 44 20 
+0131+  034A 30 45 20 30 
+0131+  034E 46 0D 0A 0D 
+0131+  0352 0A 00 
+0132+  0354             				
+0133+  0354             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0134+  0354             ; cmd_reset	- does a cold or warm reset
+0135+  0354 F5          cmd_reset:		push	af
+0136+  0355 E5          				push	hl
+0137+  0356             				
+0138+  0356 21 73 03    				ld		hl, cmd_reset_str
+0139+  0359 CD 02 05    				call	print_string
+0140+  035C             				
+0141+  035C CD EF 04    				call	getc
+0142+  035F CD A5 04    				call	to_upper
+0143+  0362             
+0144+  0362 CD F5 04    				call	print_newline
+0145+  0365 F7          				rst		30H
+0146+  0366 FE 59       				cp		'Y'						; cold reset?
+0147+  0368 20 05       				jr		nz, cmd_reset_1			; no - skip to reset
+0148+  036A 21 44 07    				ld		hl, boot_flag			; reset warm boot flag (force cold boot)
+0149+  036D 36 00       				ld		(hl), 0		
+0150+  036F             				
+0151+  036F C7          cmd_reset_1:	rst		00				
+0152+  0370             				
+0153+  0370 E1          				pop		hl
+0154+  0371 F1          				pop		af
+0155+  0372 C9          				ret
+0156+  0373 52 65 73 65 cmd_reset_str:	.db		"Reset: Cold reset? (Y/N): ", EOS
+0156+  0377 74 3A 20 43 
+0156+  037B 6F 6C 64 20 
+0156+  037F 72 65 73 65 
+0156+  0383 74 3F 20 28 
+0156+  0387 59 2F 4E 29 
+0156+  038B 3A 20 00 
+0157+  038E             
+0158+  038E             
+0159+  038E             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;	
+0160+  038E             ; cmd_jump - jumps to specific address and continues excecution from there
+0161+  038E             cmd_jump:		; make sure there are exactly 1 argument
+0162+  038E 3A 45 07    				ld		a, (argc)
+0163+  0391 FE 01       				cp		1				
+0164+  0393 20 0A       				jr		nz, cmd_jump_error
+0165+  0395             				
+0166+  0395             				; read in argument
+0167+  0395 2A 46 07    				ld		hl, (argv)
+0168+  0398 CD 71 04    				call	str_parse_word
+0169+  039B 30 02       				jr		nc, cmd_jump_error
+0170+  039D             				
+0171+  039D D5          				push	de						; store address on stack...
+0172+  039E C9          				ret								; ...wich makes this call the specified function
+0173+  039F             
+0174+  039F             cmd_jump_error:
+0175+  039F 2A A6 03    				ld		hl,(str_cmd_jump_err)
+0176+  03A2 CD 02 05    				call	print_string
+0177+  03A5             
+0178+  03A5 C9          				ret
+0179+  03A6             
+0180+  03A6             
+0181+  03A6 55 73 61 67 str_cmd_jump_err: 	.db		"Usage: jump <ADDR>", CR, LF, EOS
+0181+  03AA 65 3A 20 6A 
+0181+  03AE 75 6D 70 20 
+0181+  03B2 3C 41 44 44 
+0181+  03B6 52 3E 0D 0A 
+0181+  03BA 00 
+0182+  03BB             
+0183+  03BB             
+0184+  03BB             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0185+  03BB             ; cmd_continue - exits out of monitor mode and continues on
+0186+  03BB E1          cmd_continue:	pop		hl		; exit out of excecute_command
+0187+  03BC C3 C2 00    				jp 		monitor_leave	
+0188+  03BF             
+0189+  03BF             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;	
+0190+  03BF             ; cmd_breatest - tests the "break" functionality by issuing rst 30H eight times
+0191+  03BF             cmd_breaktest:
+0192+  03BF 06 08       				ld		b, 8
+0193+  03C1 3E 00       				ld		a,0
+0194+  03C3             cmd_breaktest_loop:
+0195+  03C3 3C          				inc		a
+0196+  03C4             
+0197+  03C4             
+0198+  03C4 F7          				rst		30H				; breakpoint!
+0199+  03C5 10 FC       				djnz	cmd_breaktest_loop
+0200+  03C7 C9          				ret
+0201+  03C8             
+0202+  03C8             
+0203+  03C8             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0204+  03C8             ; cmd_cf_id - loads and dumps the ID sector of the CF card
+0205+  03C8 21 FF 07    cmd_cf_id:		ld		HL, cf_sector_buffer	; pointer to cf sector buffer in RAM
+0206+  03CB CD A0 05    				call	cf_read_id
+0207+  03CE             
+0208+  03CE D8          				ret		C
+0209+  03CF             
+0210+  03CF 21 FF 07    				ld		HL, cf_sector_buffer	; pointer to cf sector buffer in RAM
+0211+  03D2 11 FF 09    				ld		DE, cf_sector_buffer + 512 ; end of cf sector buffer in RAM
+0212+  03D5 CD C8 02    				call	dump_memory
+0213+  03D8 C9          				ret
+0214+  03D9             
+0215+  03D9             
+0216+  03D9 21 FF 07    cmd_cf_read:	ld		HL, cf_sector_buffer	; pointer to cf sector buffer in RAM
+0217+  03DC CD A0 05    				call	cf_read_id
+0218+  03DF             
+0219+  03DF             
+0220+  03DF 21 FF 07    				ld		HL, cf_sector_buffer	; pointer to cf sector buffer in RAM
+0221+  03E2 11 FF 09    				ld		DE, cf_sector_buffer + 512 ; end of cf sector buffer in RAM
+0222+  03E5 CD C8 02    				call	dump_memory
+0223+  03E8 C9          				ret
+0224+  03E9             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0225+  03E9             ; DOES NOT WORK ANYMORE:::::...-.-.!:!!:!:
+0226+  03E9 CD 02 05    cmd_test:		call	print_string
+0227+  03EC             				
+0228+  03EC CD 71 04    				call	str_parse_word				
+0229+  03EF 38 03       				JR		C, cmd_test_1
+0230+  03F1             
+0231+  03F1 3E FF       				ld		a, $ff
+0232+  03F3 C9          				ret
+0233+  03F4             				
+0234+  03F4 D3 00       cmd_test_1:		out		(LED_PORT), a
+0235+  03F6 D5          				push	de
+0236+  03F7 E1          				pop		hl
+0237+  03F8 CD 63 05    				call	print_word
+0238+  03FB C9          				ret
+0239+  03FC             
+0240+  03FC             
+0241+  03FC             
+0242+  03FC             
+0243+  03FC              0212   03FC             #INCLUDE	"string.asm"
+0001+  03FC             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0002+  03FC             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  STRING ROUTINES  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0003+  03FC             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0004+  03FC             
+0005+  03FC             ; read_line - reads a line of text, returns when enter is pressed. HL then contains the address to the read string
+0006+  03FC             ; affects: none
+0007+  03FC             ; arguments: HL - start address of string buffer
+0008+  03FC             ; returns: none (HL unaffectd)
+0009+  03FC F5          read_line:		push	af						; save registers
+0010+  03FD C5          				push	bc
+0011+  03FE E5          				push	hl
+0012+  03FF             				
+0013+  03FF 06 00       				ld		b,	0					; b stores how many characters have been entered				
+0014+  0401             read_line_loop:	
+0015+  0401             
+0016+  0401             				; ; only for debug
+0017+  0401             				; push	af
+0018+  0401             				; ld		a, b
+0019+  0401             				; out		(LED_PORT), a
+0020+  0401             				; pop		af
+0021+  0401             				; ;  - | | - 
+0022+  0401             				
+0023+  0401 CD EF 04    				call	getc					; read a character
+0024+  0404             				
+0025+  0404 FE 0D       				cp		$0D						; is this a carriage return?
+0026+  0406 28 1F       				jr		Z, read_line_done
+0027+  0408             				
+0028+  0408 FE 08       				cp		$08						; is this a backspace?
+0029+  040A CA 1A 04    				jp		Z, read_line_bsp
+0030+  040D             				
+0031+  040D CD 91 04    				call	is_print				; is this a printable charater (no control character)?
+0032+  0410 30 EF       				jr		NC, read_line_loop		; NO - skip to next
+0033+  0412             				
+0034+  0412             				
+0035+  0412 CD E9 04    				call	putc					; echo character back
+0036+  0415 77          				ld		(hl), a					; store entered character
+0037+  0416 23          				inc		hl						; increment pointer
+0038+  0417 04          				inc		b						; count characters
+0039+  0418             				
+0040+  0418 18 E7       				jr		read_line_loop			; read next character
+0041+  041A             				
+0042+  041A             				
+0043+  041A             read_line_bsp:	
+0044+  041A 05          				dec		b						; decrease number of characters entered
+0045+  041B FA 24 04    				jp		M, read_line_bsp_1		; if negative - skip echo and pointer decrease
+0046+  041E             				
+0047+  041E CD E9 04    				call	putc					; echo backspace
+0048+  0421 2B          				dec		hl						; decrement counter (effectively erasing the last character)
+0049+  0422 18 DD       				jr		read_line_loop
+0050+  0424             				
+0051+  0424             read_line_bsp_1: 
+0052+  0424 04          				inc		b						; b negative (= -1) - reset b to 0 and read in next character
+0053+  0425 18 DA       				jr		read_line_loop
+0054+  0427             
+0055+  0427             				
+0056+  0427             read_line_done:	;ld		a, EOS					; load A with the end-of-string character
+0057+  0427 36 00       				ld		(hl), EOS				; put EOS at the end of the string
+0058+  0429             				
+0059+  0429 E1          				pop		hl						; restore registers
+0060+  042A C1          				pop		bc
+0061+  042B F1          				pop		af
+0062+  042C C9          				ret								; return
+0063+  042D             				
+0064+  042D             
+0065+  042D             ; str_next_token - iterates through the string in HL until first space or EOS is found, replaces that character with EOS and returns the address to the next character in DE
+0066+  042D             ; returns: DE - pointer to start of next string
+0067+  042D             ; affects: A - holds character
+0068+  042D             str_next_token:
+0069+  042D E5                          push    hl                      ; store string start
+0070+  042E             
+0071+  042E             str_next_token_loop:
+0072+  042E 7E                          ld      a, (hl)
+0073+  042F FE 20                       cp      ' '
+0074+  0431 28 07                       jr      Z, str_next_token_space
+0075+  0433 FE 00                       cp      EOS
+0076+  0435 28 05                       jr      Z, str_next_token_ret
+0077+  0437             
+0078+  0437 23                          inc     hl
+0079+  0438 18 F4                       jr      str_next_token_loop
+0080+  043A             
+0081+  043A             str_next_token_space:
+0082+  043A 36 00                       ld      (hl), EOS				; add an end of line character
+0083+  043C             
+0084+  043C             str_next_token_ret:
+0085+  043C 23                          inc     HL                      ; point to next character in string
+0086+  043D 54                          ld      d, h                    ; store starting point of next string in DE
+0087+  043E 5D                          ld      e, l
+0088+  043F             
+0089+  043F E1                          pop     hl                      ; restore original string start
+0090+  0440 C9                          ret
+0091+  0441             				
+0092+  0441             
+0093+  0441             ; skips all non-word characters (basically space only)
+0094+  0441             str_skip_whitespace:
+0095+  0441 7E          				ld		a, (hl)
+0096+  0442 FE 20       				cp		' '						; compare to space
+0097+  0444 C0          				ret		nz						; no space -> return
+0098+  0445 23          				inc		hl						; point to next character
+0099+  0446 18 F9       				jr		str_skip_whitespace
+0100+  0448             
+0101+  0448             
+0102+  0448             ; str_parse_nibble - parses a single hexadecimal nibble from the string in HL. Sets carry flag if sucessful
+0103+  0448             ; returns: A - parsed nibble
+0104+  0448             str_parse_nibble:
+0105+  0448 7E          				ld		a, (hl)					; load a character
+0106+  0449 FE 00       				cp		EOS						; is it the end of the string?
+0107+  044B 28 0E       				jr		Z, str_parse_nibble_err	; yes - error
+0108+  044D             
+0109+  044D CD A5 04    				call	to_upper
+0110+  0450 CD 7D 04    				call	is_hex					; check if this is a valid hex character
+0111+  0453 30 06       				jr		nc, str_parse_nibble_err ; no - error
+0112+  0455             
+0113+  0455 23          				inc		hl						; move pointer to next character
+0114+  0456             
+0115+  0456 CD 9A 04    				call	nibble2val				; yes - parse it
+0116+  0459 37          				scf								; set carry flag to indicate success
+0117+  045A C9          				ret								; return nibble in a
+0118+  045B             
+0119+  045B             str_parse_nibble_err:
+0120+  045B B7          				or		a						; reset carry flag to indicate failure
+0121+  045C C9          				ret
+0122+  045D             
+0123+  045D             
+0124+  045D             
+0125+  045D             
+0126+  045D             ; str_parse_byte - reads a byte from the string. if not possible, carry flag will be cleared
+0127+  045D             ; returns: A - parsed byte value
+0128+  045D CD 48 04    str_parse_byte:	call	str_parse_nibble
+0129+  0460 D0          				ret		NC						; carry reset = failure
+0130+  0461 CB 07       				rlc		a
+0131+  0463 CB 07       				rlc		a
+0132+  0465 CB 07       				rlc		a
+0133+  0467 CB 07       				rlc		a
+0134+  0469 47          				ld		b, a
+0135+  046A CD 48 04    				call	str_parse_nibble
+0136+  046D D0          				ret		NC						; carry reset = failure
+0137+  046E B0          				or		b						; add first nibble (this resets carry flag)
+0138+  046F             
+0139+  046F 37          				scf								; set carry flag to indicate success
+0140+  0470 C9          				ret								; return
+0141+  0471             
+0142+  0471             ; str_parse_word - reads a word from the string. If not possible, carry flag will be cleares
+0143+  0471             ; returns: DE - parsed word value
+0144+  0471             str_parse_word:	
+0145+  0471 CD 5D 04    				call	str_parse_byte
+0146+  0474 D0          				ret		nc						; carry reset = failure
+0147+  0475 57          				ld		d, a
+0148+  0476 CD 5D 04    				call	str_parse_byte
+0149+  0479 D0          				ret		nc						; carry reset = failure
+0150+  047A 5F          				ld		e, a
+0151+  047B             
+0152+  047B 37          				scf								; set carry flag to indicate success
+0153+  047C C9          				ret								; return
+0154+  047D             
+0155+  047D             ; is_hex: checks a character stored in A for being a valid hexadecimal digit
+0156+  047D             ; a valid hexadecimal digit is denoted by a set carry flag
+0157+  047D             ; affects: none
+0158+  047D FE 47       is_hex:			CP		'F' + 1					; Greater than 'F'?
+0159+  047F D0          				RET		NC						; Yes
+0160+  0480 FE 30       				CP		'0'						; Less than '0'?
+0161+  0482 30 02       				JR		NC, is_hex_1			; No, continue
+0162+  0484             				
+0163+  0484 3F          				CCF								; Complment carry flag (= clear it)
+0164+  0485 C9          				RET								; return
+0165+  0486 FE 3A       is_hex_1:		CP		'9' + 1					; Less or equal to '9'?
+0166+  0488 D8          				RET		C						; Yes (carry is set)
+0167+  0489             				
+0168+  0489 FE 41       				CP		'A'						; Less than 'A'?
+0169+  048B 30 02       				JR		NC, is_hex_2			; No, continue
+0170+  048D             				
+0171+  048D 3F          				CCF								; Yes, clear carry and return
+0172+  048E C9          				RET
+0173+  048F 37          is_hex_2:		SCF								; Set carry
+0174+  0490 C9          				RET
+0175+  0491             		
+0176+  0491             
+0177+  0491             ; is_print: checks if a character is a printable ASCII character. A valid character is denoted by a set carry flag
+0178+  0491             ; affects: none
+0179+  0491 FE 20       is_print:		cp		SPACE
+0180+  0493 30 02       				jr		nc, is_print_1
+0181+  0495 3F          				ccf
+0182+  0496 C9          				ret
+0183+  0497 FE 7F       is_print_1:		cp		$7f
+0184+  0499 C9          				ret
+0185+  049A             
+0186+  049A             ; nibble2val: expects a hexadecimal digit (in upper case!) in A and returns the corresponding value in A
+0187+  049A             ; affects: A
+0188+  049A FE 3A       nibble2val:		CP		'9' + 1					; Is it a digit (Less or equal to '9') ?
+0189+  049C 38 02       				JR		C, nibble2val_1			; Yes
+0190+  049E D6 07       				SUB		7						; Adjust for A-F
+0191+  04A0 D6 30       nibble2val_1:	SUB		'0'						; Fold back to 0..15
+0192+  04A2 E6 0F       				AND		$0f						; Only return lower 4 bits
+0193+  04A4 C9          				RET
+0194+  04A5             		
+0195+  04A5             		
+0196+  04A5             ; to_upper: Converts a single character contained in A to upper case
+0197+  04A5             ; returns: character in A
+0198+  04A5 FE 61       to_upper:		CP		'a'						; Nothing to do if not lower case
+0199+  04A7 D8          				RET		C
+0200+  04A8 FE 7B       				CP		'z' + 1					; > 'z' ?
+0201+  04AA D0          				RET		NC						; Nothing to do either
+0202+  04AB E6 5F       				AND		$5f						; Convert to upper case
+0203+  04AD C9          				RET
+0204+  04AE             
+0205+  04AE             ; str_cmp - compares two strings and sets carry flag if there is a match
+0206+  04AE             ; parameters: HL, DE - string pointers
+0207+  04AE             ; affects: A
+0208+  04AE E5          str_cmp:		push	hl
+0209+  04AF D5          				push	de
+0210+  04B0             
+0211+  04B0 1A          str_cmp_loop:	ld		a, (DE)					; load character into A
+0212+  04B1 BE          				cp		(HL)					; compare with character in HL
+0213+  04B2 20 09       				jr		NZ, str_cmp_ns			; strings are not the same
+0214+  04B4             
+0215+  04B4 FE 00       				cp		EOS						; the strings are the same so far and we have reached EOS character?
+0216+  04B6 23          				inc		hl						; increment pointers (does not affect flags)
+0217+  04B7 13          				inc		de
+0218+  04B8 20 F6       				jr		NZ, str_cmp_loop		; no EOS-character?
+0219+  04BA             				
+0220+  04BA 37          				scf								; set carry flag
+0221+  04BB 18 01       				jr		str_cmp_ret				; return
+0222+  04BD             
+0223+  04BD B7          str_cmp_ns:		or		a						; reset carry flag
+0224+  04BE             
+0225+  04BE D1          str_cmp_ret:	pop		de						; pop registers and return
+0226+  04BF E1          				pop		hl
+0227+  04C0 C9          				ret
+0228+  04C1             
+0229+  04C1             
+0230+  04C1             ; str_starts_with - checks if string in HL starts with string in DE and sets carry flag if there is a match
+0231+  04C1             ; parameters: HL, DE - string pointers
+0232+  04C1             ; affects: A
+0233+  04C1             ; str_starts_with:
+0234+  04C1             ; 				push	hl
+0235+  04C1             ; 				push	de
+0236+  04C1             
+0237+  04C1             ; str_starts_with_loop:
+0238+  04C1             ; 				ld		a, (DE)					; load character into A
+0239+  04C1             ; 				cp		0						; is this the end of the string to start with?
+0240+  04C1             ; 				jr		Z, str_starts_with_end
+0241+  04C1             ; 				cp		(HL)					; compare with character in HL
+0242+  04C1             ; 				jr		NZ, str_starts_with_ns		; strings are not the same
+0243+  04C1             
+0244+  04C1             ; 				cp		EOS						; the strings are the same so far and we have reached EOS character?
+0245+  04C1             ; 				inc		hl						; increment pointers (does not affect flags)
+0246+  04C1             ; 				inc		de
+0247+  04C1             ; 				jr		NZ, str_starts_with_loop		; no EOS-character?
+0248+  04C1             				
+0249+  04C1             ; str_starts_with_end:
+0250+  04C1             ; 				scf								; set carry flag
+0251+  04C1             ; 				jr		str_starts_with_ret		; return
+0252+  04C1             
+0253+  04C1             ; str_starts_with_ns:		
+0254+  04C1             ; 				or		a						; reset carry flag
+0255+  04C1             
+0256+  04C1             ; str_starts_with_ret:	
+0257+  04C1             ; 				pop		de						; pop registers and return
+0258+  04C1             ; 				pop		hl
+0259+  04C1             ; 				ret0213   04C1             #INCLUDE	"sio_driver.asm"
+0001+  04C1             
+0002+  04C1             #IFNDEF		SIO_DRIVER
+0003+  04C1             #DEFINE		SIO_DRIVER
+0004+  04C1             
+0005+  04C1             ; port definitions for the SIO/2 chip
+0006+  04C1             SIO_BASE			.EQU	$20
+0007+  04C1             SIO_A_DATA			.EQU	SIO_BASE + 0 + 0
+0008+  04C1             SIO_A_CTRL			.EQU	SIO_BASE + 0 + 2
+0009+  04C1             SIO_B_DATA			.EQU	SIO_BASE + 1 + 0
+0010+  04C1             SIO_B_CTRL			.EQU	SIO_BASE + 1 + 2
+0011+  04C1             
+0012+  04C1             #INCLUDE	"constants.asm"
+0001++ 04C1~            #IFNDEF	CONSTANTS
+0002++ 04C1~            #DEFINE	CONSTANTS
+0003++ 04C1~            
+0004++ 04C1~            EOS					.EQU	$00		; End Of String
+0005++ 04C1~            CR					.EQU	$0d		; Carriage Return (ENTER)
+0006++ 04C1~            LF					.EQU	$0a		; Line Feed
+0007++ 04C1~            SPACE				.EQU	$20		; Space
+0008++ 04C1~            TAB					.EQU	$09		; Tabulator
+0009++ 04C1~            
+0010++ 04C1             #ENDIF
+0013+  04C1             
+0014+  04C1             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;		
+0015+  04C1             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Serial I/O-routines  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0016+  04C1             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0017+  04C1             
+0018+  04C1             ; sio_init: initializes the SIO/2 for serial communication
+0019+  04C1             ; affects: HL, B, C
+0020+  04C1 06 0C       sio_init:		LD		B, 12					; load B with number of bytes (12)
+0021+  04C3 21 CB 04    				LD		HL, sio_init_data		; HL points to start of data
+0022+  04C6 0E 22       				LD 		C, SIO_A_CTRL			; I/O-port for write
+0023+  04C8 ED B3       				OTIR							; block write of B bytes to [C] starting from HL
+0024+  04CA C9          				ret
+0025+  04CB             
+0026+  04CB 00 30       sio_init_data:	.DB		$00, %00110000			; write to WR0: error reset
+0027+  04CD 00 18       				.DB		$00, %00011000			; write to WR0: channel reset
+0028+  04CF 01 00       				.DB		$01, %00000000	 		; write to WR1: no interrupts enabled
+0029+  04D1 03 C1       				.DB		$03, %11000001			; write to WR3: enable RX 8bit
+0030+  04D3 04 84       				.DB		$04, %10000100			; write to WR4: clkx32,1 stop bit, no parity
+0031+  04D5 05 68       				.DB		$05, %01101000			; write to WR5: DTR inactive, enable TX 8bit, BREAK off, TX on, RTS inactive
+0032+  04D7             
+0033+  04D7             
+0034+  04D7             ; tx_ready: waits for transmitt buffer to become empty
+0035+  04D7             ; affects: none
+0036+  04D7 F5          sio_tx_ready:	push	af
+0037+  04D8             sio_tx_ready_loop:
+0038+  04D8 DB 22       				in		a, (SIO_A_CTRL)			; read RR0
+0039+  04DA CB 57       				bit		2, a					; check if bit 2 is set
+0040+  04DC 28 FA       				jr		z, sio_tx_ready_loop			; if no - check again
+0041+  04DE F1          				pop		af
+0042+  04DF C9          				ret
+0043+  04E0             				
+0044+  04E0             ; rx_ready: waits for a character to become available
+0045+  04E0             ; affects: none
+0046+  04E0 F5          sio_rx_ready:	push	af
+0047+  04E1             sio_rx_ready_loop:	
+0048+  04E1 DB 22       				in		a, (SIO_A_CTRL)			; read RR0
+0049+  04E3 CB 47       				bit		0, a					; check if bit 0 is set
+0050+  04E5 28 FA       				jr		z, sio_rx_ready_loop		; if no - rx buffer has no data => check again
+0051+  04E7 F1          				pop		af
+0052+  04E8 C9          				ret
+0053+  04E9             				
+0054+  04E9             		
+0055+  04E9             ; sends byte in reg A	
+0056+  04E9             ; affects: none
+0057+  04E9 CD D7 04    putc:			call	sio_tx_ready
+0058+  04EC D3 20       				out		(SIO_A_DATA), a			; write charactet
+0059+  04EE C9          				ret								; return
+0060+  04EF             
+0061+  04EF             ; getc: waits for a byte to be available and reads it
+0062+  04EF             ; returns: A - read byte
+0063+  04EF CD E0 04    getc:			call	sio_rx_ready
+0064+  04F2 DB 20       				in		a, (SIO_A_DATA)
+0065+  04F4 C9          				ret
+0066+  04F5             
+0067+  04F5             ;// TODO: Move the rest below to another file, not really part of the serial i/o driver!
+0068+  04F5             
+0069+  04F5             ; print_newline: prints a CR/LF pair to advance to the next line 
+0070+  04F5             ; affects: none
+0071+  04F5 F5          print_newline:	push	af						; save registers
+0072+  04F6             
+0073+  04F6 3E 0D       				ld		a, CR					; print Carriage Return
+0074+  04F8 CD E9 04    				call	putc
+0075+  04FB 3E 0A       				ld		a, LF					; print Line Feed
+0076+  04FD CD E9 04    				call	putc
+0077+  0500             				
+0078+  0500 F1          				pop		af						; restore registers
+0079+  0501 C9          				ret
+0080+  0502             				
+0081+  0502             ; print_string: prints a string which starts at adress HL and is terminated by EOS-character
+0082+  0502             ; affects: none
+0083+  0502 F5          print_string:	push	af
+0084+  0503 E5          				push	hl
+0085+  0504             				
+0086+  0504 7E          print_string_1:	LD		A,(HL)					; load next character
+0087+  0505 FE 00       				CP		0						; is it en End Of String - character?
+0088+  0507 28 06       				jr		Z, print_string_2		; yes - return
+0089+  0509 CD E9 04    				call 	putc					; no - print character
+0090+  050C 23          				INC		HL						; HL++
+0091+  050D 18 F5       				jr		print_string_1			; do it again
+0092+  050F             				
+0093+  050F E1          print_string_2:	pop		hl
+0094+  0510 F1          				pop		af
+0095+  0511 C9          				ret
+0096+  0512             
+0097+  0512             
+0098+  0512             ; get_nibble: gets a nibble from a correctly entered hexadecimal digit (blocks until one is recieved) 
+0099+  0512             ; returns: A - nibble entered
+0100+  0512             get_nibble:
+0101+  0512 CD EF 04    				call	getc					; get a character
+0102+  0515 CD A5 04    				call	to_upper				; convert to upper case
+0103+  0518 CD 7D 04    				call	is_hex					; is character a hexadecimal?
+0104+  051B 30 F5       				jr		nc, get_nibble			; no, get another one
+0105+  051D CD 9A 04    				call	nibble2val				; convert hexadecimal
+0106+  0520 CD 42 05    				call	print_nibble			; echo character
+0107+  0523 C9          				ret
+0108+  0524             				
+0109+  0524             ; get_byte: gets a byte from the serial port in two hexadecimal numbers, blocks since it calls get_nibble
+0110+  0524             ; returns: A - byte entered
+0111+  0524 C5          get_byte:		push bc
+0112+  0525 CB 07       				rlc		a
+0113+  0527             				
+0114+  0527 CD 12 05    				call	get_nibble
+0115+  052A CB 07       				rlc		a
+0116+  052C CB 07       				rlc		a
+0117+  052E CB 07       				rlc		a
+0118+  0530 47          				ld		b, a
+0119+  0531 CD 12 05    				call	get_nibble
+0120+  0534 B0          				or		b
+0121+  0535             				
+0122+  0535 C1          				pop bc
+0123+  0536 C9          				ret
+0124+  0537             ; get_word: gets a word from 4 hexadecimal digits
+0125+  0537             ; affects: none
+0126+  0537 F5          get_word:		push	af						; save registers
+0127+  0538 CD 24 05    				call	get_byte				; get one byte and put in h
+0128+  053B 67          				ld		h,a
+0129+  053C CD 24 05    				call	get_byte				; get one byte and put in l
+0130+  053F 6F          				ld		l, a
+0131+  0540 F1          				pop		af						; restore registers and return
+0132+  0541 C9          				ret
+0133+  0542             
+0134+  0542             		
+0135+  0542             ; print_nibble: prints a single hex nibble which is given in the lower 4 bits of A
+0136+  0542 F5          print_nibble:	push	af						; dont destroy the contents of a
+0137+  0543 E6 0F       				and		$0f						; just in case...
+0138+  0545 C6 30       				add		a, '0'					; if we have a digit we are done here
+0139+  0547 FE 3A       				cp		'9' + 1					; is the result > 9 ?
+0140+  0549 38 02       				jr		c, print_nibble_1		
+0141+  054B C6 07       				add		a, 'A' - '0' - $0a		; Take care of A-F
+0142+  054D             print_nibble_1:	
+0143+  054D CD E9 04    				call	putc				; print nibble and return
+0144+  0550 F1          				pop		af						; restore contents of a
+0145+  0551 C9          				ret
+0146+  0552             				
+0147+  0552             ; print_byte: prints a single byte in A as two hexadecimal charcters
+0148+  0552             ; affects: none
+0149+  0552 F5          print_byte:		push	af						; save registers
+0150+  0553 C5          				push	bc
+0151+  0554 47          				ld		b, a					; copy byte to b register
+0152+  0555 0F          				rrca							; shift down the high nibble in A
+0153+  0556 0F          				rrca
+0154+  0557 0F          				rrca
+0155+  0558 0F          				rrca
+0156+  0559 CD 42 05    				call 	print_nibble			; print high nibble
+0157+  055C 78          				ld		a, b					; move low nibble to a
+0158+  055D CD 42 05    				call	print_nibble			; print low nibble
+0159+  0560             				
+0160+  0560 C1          				pop		bc						; restore registers
+0161+  0561 F1          				pop		af
+0162+  0562 C9          				ret
+0163+  0563             				
+0164+  0563             ; print_word: prints a word contained in HL as 4 hexadecimal characters
+0165+  0563             ; affects: none
+0166+  0563 E5          print_word:		push 	hl						; save registers
+0167+  0564 F5          				push 	af
+0168+  0565             				
+0169+  0565 7C          				ld		a, h					; print high byte
+0170+  0566 CD 52 05    				call	print_byte
+0171+  0569 7D          				ld		a, l					; print low byte
+0172+  056A CD 52 05    				call	print_byte
+0173+  056D             				
+0174+  056D F1          				pop		af						; restore registers
+0175+  056E E1          				pop		hl
+0176+  056F C9          				ret
+0177+  0570             
+0178+  0570             				;.EXPORT	getc, get_byte, get_byte, get_word, putc, print_byte, print_word, print_string
+0179+  0570             #ENDIF
+0214   0570             #INCLUDE	"cf_driver.asm"
+0001+  0570             #IFNDEF     CF_DRIVER
+0002+  0570             #DEFINE     CF_DRIVER
+0003+  0570             
+0004+  0570             ; Register and programming information from the following sources
+0005+  0570             ;	Mostly register definitions: 	http://blog.retroleum.co.uk/electronics-articles/an-8-bit-ide-interface/ 
+0006+  0570             ;	Initialization code: 			http://www.smbaker.com/z80-retrocomputing-10-rc2014-compactflash-board
+0007+  0570             ; 
+0008+  0570             ; Register  Usage:
+0009+  0570             ;   $0      IDE Data Port
+0010+  0570             ;   $1      Read: Error Code
+0011+  0570             ;   $2      Number Of Sectors To Transfer
+0012+  0570             ;   $3      Sector address LBA 0 (0:7)
+0013+  0570             ;   $4      Sector address LBA 1 (8:15)
+0014+  0570             ;   $5      Sector address LBA 2 (16:23)
+0015+  0570             ;   $6      Sector address LBA 3 (24:27)
+0016+  0570             ;   $7      Read: Status, Write: Issue Command To Drive
+0017+  0570             ;
+0018+  0570             
+0019+  0570             ; ** Register $1 Error Bits **
+0020+  0570             ;  Bit  Condition
+0021+  0570             ;   0    1 = DAM not found
+0022+  0570             ;   1    1 = Track 000 not found
+0023+  0570             ;   2    1 = Command aborted
+0024+  0570             ;   3        Reserved
+0025+  0570             ;   4    1 = ID not found
+0026+  0570             ;   5        Reserved
+0027+  0570             ;   6    1 = Uncorrectable ECC error
+0028+  0570             ;   7    1 = Bad block detected
+0029+  0570             
+0030+  0570             
+0031+  0570             ; ** Register $6 (LBA 3) Details **
+0032+  0570             ;   Bit 0:3 = LBA bits (24:27)
+0033+  0570             ;   Bit 4   = Select Master (0) or Slave (1) drive
+0034+  0570             ;   Bit 5   = Always set to 1
+0035+  0570             ;   Bit 6   = Always Set to 1 for LBA Mode Access
+0036+  0570             ;   Bit 7   = Always set to 1
+0037+  0570             
+0038+  0570             ; ** Register $7 STATUS Bits **
+0039+  0570             ;  Bit Name   Condition
+0040+  0570             ;   0   ERR    1 = Previous command ended in an error (see register $1 for more info)
+0041+  0570             ;   1   IDX        (not important)
+0042+  0570             ;   2   CORR       (not important)
+0043+  0570             ;   3   DRQ    1 = Data Request Ready (Sector buffer ready for transfer)
+0044+  0570             ;   4   DSC        (not important)
+0045+  0570             ;   5   DF     1 = Write Fault
+0046+  0570             ;   6   RDY    1 = Ready for command
+0047+  0570             ;   7   BUSY   1 = Controller is busy executing a command.
+0048+  0570             
+0049+  0570             
+0050+  0570             
+0051+  0570             ; Register port definitions for the CF-card interface
+0052+  0570             CF_BASE         .EQU        $40
+0053+  0570             
+0054+  0570             CF_DATA         .EQU        CF_BASE + 0
+0055+  0570             CF_ERROR        .EQU        CF_BASE + 1
+0056+  0570             CF_SECTORS      .EQU        CF_BASE + 2
+0057+  0570             CF_LBA0         .EQU        CF_BASE + 3
+0058+  0570             CF_LBA1         .EQU        CF_BASE + 4
+0059+  0570             CF_LBA2         .EQU        CF_BASE + 5
+0060+  0570             CF_LBA3         .EQU        CF_BASE + 6
+0061+  0570             CF_CMD          .EQU        CF_BASE + 7
+0062+  0570             
+0063+  0570             ; ** Key Command Definititions **
+0064+  0570             CF_CMD_READ		.EQU	   	$20 		; - Read sectors with retry
+0065+  0570             CF_CMD_WRITE	.EQU		$30			; - Write sectors with retry
+0066+  0570             CF_CMD_ID		.EQU		$EC			; - Identify drive
+0067+  0570             CF_CMD_FEATURE 	.EQU		$EF			; - Set Feature
+0068+  0570             
+0069+  0570             
+0070+  0570             ; cf_init - initializes the CF interface. Enables 8-bit mode and disables write caching
+0071+  0570             ; affects: A
+0072+  0570 CD 84 05    cf_init:    	call	cf_wait_ready		; wait for CF card to be ready
+0073+  0573             
+0074+  0573 3E 01       				ld		a, $01				; write 0x01 (= enable 8-bit mode) to DATA register
+0075+  0575 D3 40       				out		(CF_DATA), a
+0076+  0577 3E EF       				ld		a, CF_CMD_FEATURE	; write "set feature" command to COMMAND register
+0077+  0579 D3 47       				out		(CF_CMD), a
+0078+  057B             
+0079+  057B 3E 82       				ld		a, $82				; write 0x82 (= disable write caching) to DATA register
+0080+  057D D3 40       				out		(CF_DATA), a
+0081+  057F 3E EF       				ld		a, CF_CMD_FEATURE	; write "set feature" command to COMMAND register
+0082+  0581 D3 47       				out		(CF_CMD), a
+0083+  0583             
+0084+  0583 C9                          ret
+0085+  0584             
+0086+  0584             ; cf_wait_ready - waits for BUSY = 0 and RDY = 1
+0087+  0584             ; affects: A
+0088+  0584 DB 47       cf_wait_ready:  in		a, (CF_CMD)			; read STATUS
+0089+  0586 E6 C0                       and 	%11000000			; mask off busy(7) and ready(6) bits
+0090+  0588 EE 40                       xor 	%01000000			; want BUSY = 0 and RDY = 1
+0091+  058A 20 F8       				jr		nz, cf_wait_ready	; if Z the above is met
+0092+  058C C9                          ret
+0093+  058D             
+0094+  058D             ; cf_wait_data_ready - waits for BUSY = 0 and DRQ = 1
+0095+  058D             ; affects: A
+0096+  058D             cf_wait_data_ready:
+0097+  058D DB 47       				in		a, (CF_CMD)			; read STATUS
+0098+  058F E6 88                       and 	%10001000			; mask off busy(7) and drq(3) bits
+0099+  0591 EE 08                       xor 	%00001000			; want BUSY = 0 and DRQ = 1
+0100+  0593 20 EF       				jr		nz, cf_wait_ready	; if Z the above is met
+0101+  0595 C9                          ret
+0102+  0596             
+0103+  0596             ; cf_check_error - reads error status and codes
+0104+  0596             ; affects: A
+0105+  0596             ; returns: Carry flag set if error
+0106+  0596 DB 47       cf_check_error:	in		a, (CF_CMD)			; read STATUS register
+0107+  0598 E6 01       				and		%00000001			; check bit 0, Z = bit 0. This also clears the carry flag (yay!)
+0108+  059A C8          				ret		Z					; no error (bit = 0) => return
+0109+  059B             
+0110+  059B DB 41       				in		a, (CF_ERROR)		; there was an error, read the error register
+0111+  059D 37          				scf							; set carry flag to indicate error
+0112+  059E             
+0113+  059E F7          				rst		30H					; BREAK to see the error status bits, TODO: make this better
+0114+  059F C9                          ret
+0115+  05A0             
+0116+  05A0             ; cf_read_id - reads the drives ID area using the "Identify Drive" command to the specified memory location in HL
+0117+  05A0             ; parameters: HL - start of 512 byte area where CF ID sector is read to
+0118+  05A0             ; affects: A, BC, HL
+0119+  05A0             ; returns: none
+0120+  05A0 CD 84 05    cf_read_id:		call	cf_wait_ready		; wait for device ready
+0121+  05A3             
+0122+  05A3 3E EC       				ld		a, CF_CMD_ID
+0123+  05A5 D3 47       				out		(CF_CMD), a			; write "Drive ID Command" to COMMAND register
+0124+  05A7             
+0125+  05A7 CD 8D 05    				call	cf_wait_data_ready	; wait for data to be ready
+0126+  05AA             
+0127+  05AA CD 96 05    				call	cf_check_error		; check error flags
+0128+  05AD D8          				ret		C					; return if error
+0129+  05AE             
+0130+  05AE             				; read data
+0131+  05AE 0E 40       				ld		c, CF_DATA			; port to read from
+0132+  05B0 06 00       				ld		b, 0				; number of bytes to read, 0 means 256
+0133+  05B2 ED B2       				inir						; read first 256 bytes: (HL) <- [C]; B <- B-1; HL <- HL+1; Repeat while B>0
+0134+  05B4 ED B2       				inir						; read second 256 bytes: (HL) <- [C]; B <- B-1; HL <- HL+1; Repeat while B>0
+0135+  05B6             
+0136+  05B6 C9          				ret							; return
+0137+  05B7             
+0138+  05B7             ; cf_set_lba_address - sets the LBA (Logical Block Addressing) address to the address in XX, thus 2^16=65536 blocks are addressable. 
+0139+  05B7             ; With 512 bytes/block this means a total of 2^16 * 2^9 = 2^25 bytes = 2^5 MiB = 32 MiB can be addressed
+0140+  05B7             cf_set_lba_address:
+0141+  05B7             
+0142+  05B7             
+0143+  05B7 C9          				ret
+0144+  05B8             
+0145+  05B8             ; cf_read_sector - reads the sector of 512 bytes specified in cf_set_lba_address from the CF card into ram, starting at the address in HL
+0146+  05B8             ; parameters: HL - start of 512 byte ram area to read sector into
+0147+  05B8             ; returns: none
+0148+  05B8             cf_read_sector:	
+0149+  05B8             				
+0150+  05B8 C9          				ret
+0151+  05B9             
+0152+  05B9             
+0153+  05B9             ; cf_write_sector - writes the sector of 512 bytes specified in cf_set_lba_address to the CF card from ram starting at the address in HL
+0154+  05B9             ; parameters: HL - start of 512 byte ram area to write to sector
+0155+  05B9             ; returns: none
+0156+  05B9             cf_write_sector:
+0157+  05B9             
+0158+  05B9 C9          				ret
+0159+  05BA             
+0160+  05BA             #ENDIF0215   05BA             				
+0216   05BA             				
+0217   05BA             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0218   05BA             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; wait function  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0219   05BA             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0220   05BA             
+0221   05BA             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0222   05BA             ;;  waits using a loop
+0223   05BA             ;;  affects b
+0224   05BA             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0225   05BA             ; pause:
+0226   05BA             ; 		;PUSH	AF
+0227   05BA             ; 		PUSH 	BC
+0228   05BA             ; 		LD 		B, $ff
+0229   05BA             ; pause_loop:
+0230   05BA             ; 		DJNZ 	pause_loop
+0231   05BA             		
+0232   05BA             ; 		POP 	BC
+0233   05BA             ; 		;POP		AF
+0234   05BA             ; 		RET
+0235   05BA             
+0236   05BA             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0237   05BA             ;;                                                        DATA   													                        ;;
+0238   05BA             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0239   05BA 57 61 72 6D str_warm_boot:	.db		"Warm Boot...", CR, LF, EOS
+0239   05BE 20 42 6F 6F 
+0239   05C2 74 2E 2E 2E 
+0239   05C6 0D 0A 00 
+0240   05C9 43 6F 6C 64 str_cold_boot:	.db		"Cold Boot...", CR, LF, EOS
+0240   05CD 20 42 6F 6F 
+0240   05D1 74 2E 2E 2E 
+0240   05D5 0D 0A 00 
+0241   05D8 20 5A 38 30 str_init:		.DB		" Z80 Monitor v0.2 ", $A9, " 2017 Anton Berneving", CR, LF, CR, LF, EOS
+0241   05DC 20 4D 6F 6E 
+0241   05E0 69 74 6F 72 
+0241   05E4 20 76 30 2E 
+0241   05E8 32 20 A9 20 
+0241   05EC 32 30 31 37 
+0241   05F0 20 41 6E 74 
+0241   05F4 6F 6E 20 42 
+0241   05F8 65 72 6E 65 
+0241   05FC 76 69 6E 67 
+0241   0600 0D 0A 0D 0A 
+0241   0604 00 
+0242   0605 20 41 76 61 str_commands:	.DB		" Available Commands are: ", CR, LF
+0242   0609 69 6C 61 62 
+0242   060D 6C 65 20 43 
+0242   0611 6F 6D 6D 61 
+0242   0615 6E 64 73 20 
+0242   0619 61 72 65 3A 
+0242   061D 20 0D 0A 
+0243   0620 20 20 20 20 				.DB		"    help - show this list", CR, LF
+0243   0624 68 65 6C 70 
+0243   0628 20 2D 20 73 
+0243   062C 68 6F 77 20 
+0243   0630 74 68 69 73 
+0243   0634 20 6C 69 73 
+0243   0638 74 0D 0A 
+0244   063B 20 20 20 20 				.DB		"    rst - Reset Cold/Warm", CR, LF
+0244   063F 72 73 74 20 
+0244   0643 2D 20 52 65 
+0244   0647 73 65 74 20 
+0244   064B 43 6F 6C 64 
+0244   064F 2F 57 61 72 
+0244   0653 6D 0D 0A 
+0245   0656             
+0246   0656 20 20 20 20 				.DB		"    dump - print memory contents", CR, LF
+0246   065A 64 75 6D 70 
+0246   065E 20 2D 20 70 
+0246   0662 72 69 6E 74 
+0246   0666 20 6D 65 6D 
+0246   066A 6F 72 79 20 
+0246   066E 63 6F 6E 74 
+0246   0672 65 6E 74 73 
+0246   0676 0D 0A 
+0247   0678 20 20 20 20 				.DB		"    *fill - fill bytes in memory", CR, LF
+0247   067C 2A 66 69 6C 
+0247   0680 6C 20 2D 20 
+0247   0684 66 69 6C 6C 
+0247   0688 20 62 79 74 
+0247   068C 65 73 20 69 
+0247   0690 6E 20 6D 65 
+0247   0694 6D 6F 72 79 
+0247   0698 0D 0A 
+0248   069A 20 20 20 20 				.DB		"    *move - copy data in memory", CR, LF
+0248   069E 2A 6D 6F 76 
+0248   06A2 65 20 2D 20 
+0248   06A6 63 6F 70 79 
+0248   06AA 20 64 61 74 
+0248   06AE 61 20 69 6E 
+0248   06B2 20 6D 65 6D 
+0248   06B6 6F 72 79 0D 
+0248   06BA 0A 
+0249   06BB 20 20 20 20 				.DB		"    *load - load data to address", CR, LF
+0249   06BF 2A 6C 6F 61 
+0249   06C3 64 20 2D 20 
+0249   06C7 6C 6F 61 64 
+0249   06CB 20 64 61 74 
+0249   06CF 61 20 74 6F 
+0249   06D3 20 61 64 64 
+0249   06D7 72 65 73 73 
+0249   06DB 0D 0A 
+0250   06DD             				
+0251   06DD 20 20 20 20 				.DB		"    reg - view register contents @ BREAK", CR, LF
+0251   06E1 72 65 67 20 
+0251   06E5 2D 20 76 69 
+0251   06E9 65 77 20 72 
+0251   06ED 65 67 69 73 
+0251   06F1 74 65 72 20 
+0251   06F5 63 6F 6E 74 
+0251   06F9 65 6E 74 73 
+0251   06FD 20 40 20 42 
+0251   0701 52 45 41 4B 
+0251   0705 0D 0A 
+0252   0707             				
+0253   0707 20 20 20 20 				.DB		"    jump - jump to address", CR, LF
+0253   070B 6A 75 6D 70 
+0253   070F 20 2D 20 6A 
+0253   0713 75 6D 70 20 
+0253   0717 74 6F 20 61 
+0253   071B 64 64 72 65 
+0253   071F 73 73 0D 0A 
+0254   0723 20 20 20 20 				.DB		"    cont - continue excecution", CR, LF, EOS
+0254   0727 63 6F 6E 74 
+0254   072B 20 2D 20 63 
+0254   072F 6F 6E 74 69 
+0254   0733 6E 75 65 20 
+0254   0737 65 78 63 65 
+0254   073B 63 75 74 69 
+0254   073F 6F 6E 0D 0A 
+0254   0743 00 
+0255   0744             
+0256   0744             ;// TODO: MOVE THIS TO ITS OWN "RAM"-FILE
+0257   0744             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0258   0744             ;;           VARIABLES            ;;
+0259   0744             ;;	BLOCK n, reserves n bytes and ;;
+0260   0744             ;;  the label gets the value of	  ;;
+0261   0744             ;;  the first address			  ;;
+0262   0744             ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+0263   0744             
+0264   0744 00          boot_flag:		.DB		0						; boot flag
+0265   0745             
+0266   0745             argc			.BLOCK	1						; holds number of arguments
+0267   0746             argv			.BLOCK	16*2					; array of pointers to the respective arguments (16 arguments = 32 bytes in size, see below)
+0268   0766             str_buffer:		.BLOCK	128						; a string buffer
+0269   07E6             
+0270   07E6             ; temporary stack storage space
+0271   07E6             
+0272   07FA             mon_reg_stack:		.ORG	$+20				; register stack for storing the register contents while in the monitor (BREAKPOINT)
+0273   07FA             												; 20 bytes: A F B C D E H L + A' F' B' C' D' E' H' L' + IX IY
+0274   07FA             
+0275   07FB             					.ORG	$+1					; PADDING: needed to advance the instruction pointer  to the next byte when using .BLOCK below
+0276   07FB             
+0277   07FB             mon_reg_rtn_addr:	.BLOCK	2					; stores the return address (just for displaying purposes)
+0278   07FD             mon_stack_backup:	.BLOCK	2					; just a backup variable to not mess up the original stack pointer while saving/restoring
+0279   07FF             
+0280   07FF             cf_sector_buffer:	.BLOCK	512					; a temporary location to load a sector from the CF card into
+0281   09FF             
+0282   09FF             END_OF_PROGRAM	.EQU	(($ + 0FFH) & 0FF00H)	; next 256 byte boundary
+0283   09FF             
+0284   09FF             ; .ECHO	"END_OF_PROGRAM: "
+0285   09FF             ; .ECHO	END_OF_PROGRAM
+0286   09FF             ; .ECHO	"\n"
+0287   09FF             
+0288   09FF             .END
+tasm: Number of errors = 0
