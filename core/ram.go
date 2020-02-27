@@ -54,6 +54,10 @@ func (ram *RAM) put16(addr uint16, data uint16) {
 	ram.data[addr+1] = uint8((data >> 8) & 0xff)
 }
 
+func (ram *RAM) ptr8(addr uint16) *uint8 {
+	return &ram.data[addr]
+}
+
 // Dump prints the RAM contents to the provided writer
 func (ram *RAM) Dump(start, length uint16) string {
 	return hex.Dump(ram.data[start : start+length])

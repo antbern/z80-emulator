@@ -10,28 +10,39 @@ import (
 	"os"
 */
 
-type CPU struct {
+// Z80 contains all internal registers and such for the Z80 processor
+type Z80 struct {
+	A, F, B, C, D, E, H, L uint8
+	IXL, IXH, IYL, IYH     uint8
+	AF, BC, DE, HL, IX, IY reg16
+
+	PC, SP uint16
+
 	Mem *RAM
-	Reg *State
 }
 
-// NewCPU created a new CPU structure
-func NewCPU() CPU {
-	return CPU{
-		Mem: NewRAM(),
-		Reg: &State{},
-	}
+func NewZ80() Z80 {
+	z80 := Z80{Mem: NewRAM()}
+	z80.AF = reg16{&z80.A, &z80.F}
+	z80.BC = reg16{&z80.B, &z80.C}
+	z80.DE = reg16{&z80.D, &z80.E}
+	z80.HL = reg16{&z80.H, &z80.L}
+
+	z80.IX = reg16{&z80.IXH, &z80.IXL}
+	z80.IY = reg16{&z80.IYH, &z80.IYL}
+
+	return z80
 }
 
 // Step causes the CPU to handle the next instruction
-func (c *CPU) Step() {
+func (z *Z80) Step() {
 
 	// infinite loop for procesing operands
 	// read next operand and move PC forward
 
-	op := c.Mem.read8(c.Reg.PC.Get())
+	op := uint8(0x58) //z.Mem.read8Inc(&z.PC)
 
-	c.Reg.PC.Set(c.Reg.PC.Get() + 1)
+	//c.Reg.PC.Set(c.Reg.PC.Get() + 1)
 
 	// TODO: check for prefixed multi-byte op codes
 
@@ -46,13 +57,14 @@ func (c *CPU) Step() {
 			if (op & operand.opCodeMask) == operand.opCodeValue {
 				log.Printf("Matched OP: %s", operand.name)
 				matched = true
-				operand.handle(c.Reg, c.Mem)
+				operand.handle(z)
 			}
 		}
 		if !matched {
 			log.Printf("No handler found for OP %#x", op)
 		}
 	*/
+
 	// handle the op-codes using a giant switch matrix
 	switch o.x {
 	case 0:
@@ -62,8 +74,18 @@ func (c *CPU) Step() {
 			// HALT!!
 			log.Printf("HALT!")
 		}
+
 		// 	LD r[y], r[z]
-		//*c.Reg.codeToRegister(o.y) = *c.Reg.codeToRegister(o.z)
+
+		// lookup register
+		targetReg, targetName := z.codeToRegister(o.y)
+		sourceReg, sourceName := z.codeToRegister(o.z)
+
+		// apply load
+		*targetReg = *sourceReg
+
+		// print debug message
+		log.Printf("LD %s, %s", targetName, sourceName)
 
 	case 2:
 		// ALU operation alu[y] with argument r[z]
@@ -72,79 +94,75 @@ func (c *CPU) Step() {
 
 }
 
-/*
-// codeToRegister takes a bit-code and returns a pointer to the correct 8-bit register
-func (r *State) codeToRegister(code uint8) *uint8 {
+// codeToRegister takes a bit-code and returns a pointer to the correct 8-bit register or memory address
+func (z *Z80) codeToRegister(code uint8) (*uint8, string) {
 	switch code {
 	case 0:
-		return &r.RegSet.B
+		return &z.B, "B"
 	case 1:
-		return &r.RegSet.C
+		return &z.C, "C"
 	case 2:
-		return &r.RegSet.D
+		return &z.D, "D"
 	case 3:
-		return &r.RegSet.E
+		return &z.E, "E"
 	case 4:
-		return &r.RegSet.H
+		return &z.H, "H"
 	case 5:
-		return &r.RegSet.L
+		return &z.L, "L"
 	case 6:
-		return nil //&r.RegSet.HL
+		return z.Mem.ptr8(z.HL.get()), "(HL)"
 	case 7:
-		return &r.RegSet.A
+		return &z.A, "A"
 	}
 
-	return nil
+	return nil, ""
 }
-*/
 
 // Operand describes a single operands actions
 type Operand struct {
 	name string
 	// theese values are used to match the compiled operands
 	opCodeMask, opCodeValue uint8
-	handle                  func(*State, *RAM)
+	handle                  func(*Z80)
 }
 
-/*
 var operands = []Operand{
 	Operand{ // NOOP
 		name:        "NOOP",
 		opCodeMask:  0xff,
 		opCodeValue: 0x00,
-		handle:      func(*State, *RAM) {},
+		handle:      func(*Z80) {},
 	}, Operand{ // JR
 		name:        "JR",
 		opCodeMask:  0xff,
 		opCodeValue: 0x18,
-		handle: func(s *State, r *RAM) {
+		handle: func(z *Z80) {
 			// read offset and increment PC
-			offset := int16(r.read8Inc(&s.PC))
+			offset := int16(z.Mem.read8Inc(&z.PC))
 
 			// perform the jump using ugly type conversions...
-			s.PC = uint16(int16(s.PC) + offset)
+			z.PC = uint16(int16(z.PC) + offset)
 
-			log.Printf("JP, offset: %d (%#x), new PC: %#x", offset, offset, s.PC)
+			log.Printf("JP, offset: %d (%#x), new PC: %#x", offset, offset, z.PC)
 		},
 	}, Operand{
 		name:        "CALL",
 		opCodeMask:  0xff,
 		opCodeValue: 0xCD,
-		handle: func(s *State, r *RAM) {
+		handle: func(z *Z80) {
 
 			// read target adress
-			target := r.read16Inc(&s.PC)
+			target := z.Mem.read16Inc(&z.PC)
 
 			// TODO: push PC onto the stack
 
 			// move PC
-			s.PC = target
+			z.PC = target
 
 			log.Printf("CALL, target: %#x", target)
 		},
 	},
 }
-*/
 
 // OP splits an op-code into its different parts according to the description in http://www.z80.info/decoding.htm
 type OP struct {

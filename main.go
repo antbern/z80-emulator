@@ -1,17 +1,26 @@
 package main
 
+/* Useful Links
+https://github.com/remogatto/z80/blob/master/z80.go
+https://github.com/floooh/chips/blob/master/systems/cpc.h
+https://floooh.github.io/2016/07/12/z80-rust-ms1.html
+Instruction table: http://clrhome.org/table/
+Decoding instructions: http://www.z80.info/decoding.htm
+*/
+
 import (
 	"bufio"
 	"io/ioutil"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/antbern/z80-emulator/core"
 )
 
 func main() {
 	// read the contents of the binary into a byte slice
-	data, err := readBinary("input/main.bin")
+	data, err := readBinary("input/count.bin")
 
 	if err != nil {
 		log.Println("Error leading file: ", err)
@@ -42,19 +51,27 @@ func mainLoop(code []byte) {
 
 	//r6 := core.NewR16(&testReg, &testReg)
 
-	cpu := core.NewCPU()
+	cpu := core.NewZ80()
 
 	//data := []uint8{0x01, 0x02, 0x30}
 	cpu.Mem.Write(0x0000, &code)
 
 	// start with PC at 0x0000
-	cpu.Reg.PC.Set(0x0000)
+	cpu.PC = 0x0000
 
 	//log.Printf("%s", cpu.Mem.Dump(0x0000, 0x1000))
 	// infinite loop for procesing operands
+	reader := bufio.NewReader(os.Stdin)
 	for {
-		cpu.Step()
-		bufio.NewReader(os.Stdin).ReadBytes('\n')
+		// read a single character from stdin that decides what to do
+		print(">")
+		text, _ := reader.ReadBytes('\n')
+		switch strings.TrimSpace(string(text)) {
+		case "", "n":
+			cpu.Step()
+		case "q":
+			goto outside
+		}
 	}
-
+outside:
 }

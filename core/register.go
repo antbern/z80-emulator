@@ -1,5 +1,42 @@
 package core
 
+////////////////// SIMPLE 16 BIT REGISTER ///////////////////
+type reg16 struct {
+	high, low *uint8
+}
+
+func (r reg16) set(value uint16) {
+	*r.high, *r.low = splitWord(value)
+}
+
+func (r reg16) get() uint16 {
+	return joinBytes(*r.high, *r.low)
+}
+
+func (r reg16) inc() {
+	temp := r.get() + 1
+	*r.high = uint8(temp >> 8)
+	*r.low = uint8(temp & 0xff)
+}
+
+func (r reg16) dec() {
+	temp := r.get() - 1
+	*r.high = uint8(temp >> 8)
+	*r.low = uint8(temp & 0xff)
+}
+
+/////////////////////////////////////////////////////////////
+
+func joinBytes(h, l uint8) uint16 {
+	return uint16(h)<<8 | uint16(l)
+}
+
+func splitWord(word uint16) (uint8, uint8) {
+	return 0, uint8(word>>8) | uint8(word&0xff)
+}
+
+/////////////////////////////////////////////////////////////
+
 // State holds all the registers in the Z80
 type State struct {
 	// program counter, stack pointer and index registers
