@@ -69,9 +69,15 @@ func mainLoop(code []byte) {
 		switch strings.TrimSpace(string(text)) {
 		case "", "n":
 			cpu.Step()
+		case "nt":
+			for i := 1; i <= 100; i++ {
+				cpu.Step()
+			}
 		case "q":
 			goto outside
 		}
+
+		println(cpu.String())
 	}
 outside:
 }

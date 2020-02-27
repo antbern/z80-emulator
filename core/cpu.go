@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"log"
 )
 
@@ -16,7 +17,10 @@ type Z80 struct {
 	IXL, IXH, IYL, IYH     uint8
 	AF, BC, DE, HL, IX, IY reg16
 
-	PC, SP uint16
+	spL, spH uint8
+	SP       reg16
+
+	PC uint16
 
 	Mem *RAM
 }
@@ -31,6 +35,8 @@ func NewZ80() Z80 {
 	z80.IX = reg16{&z80.IXH, &z80.IXL}
 	z80.IY = reg16{&z80.IYH, &z80.IYL}
 
+	z80.SP = reg16{&z80.spH, &z80.spL}
+
 	return z80
 }
 
@@ -40,37 +46,70 @@ func (z *Z80) Step() {
 	// infinite loop for procesing operands
 	// read next operand and move PC forward
 
-	op := uint8(0x58) //z.Mem.read8Inc(&z.PC)
+	// opCode := uint8(0x58) //z.Mem.read8Inc(&z.PC)
+	opCode := z.Mem.read8Inc(&z.PC)
 
 	//c.Reg.PC.Set(c.Reg.PC.Get() + 1)
 
 	// TODO: check for prefixed multi-byte op codes
+	if opCode == 0xCB { // bit manipulations and roll/shift
+		op := ParseOP(z.Mem.read8Inc(&z.PC))
+		reg, _ := z.regTableR(op.z)
+		switch op.x {
+		case 0: // rot[y] r[z]
+		case 1: // BIT y, r[z]: Z = NOT bit y in r[z]
+		case 2: // RES y, r[z]
+			*reg &^= (1 << op.y)
+		case 3: // SET y, r[z]
+			*reg |= (1 << op.y)
+		}
+
+	}
 
 	// parse operands
-	o := ParseOP(op)
-	log.Printf("Operand: %#x -> %+v", op, o)
-
-	// find operand that match
-	/*
-		matched := false
-		for _, operand := range operands {
-			if (op & operand.opCodeMask) == operand.opCodeValue {
-				log.Printf("Matched OP: %s", operand.name)
-				matched = true
-				operand.handle(z)
-			}
-		}
-		if !matched {
-			log.Printf("No handler found for OP %#x", op)
-		}
-	*/
+	op := ParseOP(opCode)
+	log.Printf("Operand: %#x -> %+v", opCode, op)
 
 	// handle the op-codes using a giant switch matrix
-	switch o.x {
+	switch op.x {
 	case 0:
+		switch op.z {
+		case 0:
+		case 1:
+			reg, _ := z.regTableRP(op.p, false)
+			if op.q == 0 {
+				// LD rp[p], nn
+				reg.set(z.Mem.read16Inc(&z.PC))
+			} else if op.q == 1 {
+				// ADD HL, rp[p]
+				z.HL.set(z.HL.get() + reg.get())
+			}
+		case 2:
+		case 3:
+			reg, _ := z.regTableRP(op.p, false)
+			if op.q == 0 {
+				reg.inc()
+			} else if op.q == 1 {
+				reg.dec()
+			}
+		case 4:
+			// INC r[y]
+			reg, _ := z.regTableR(op.y)
+			(*reg)++
+		case 5:
+			// DEC r[y]
+			reg, _ := z.regTableR(op.y)
+			(*reg)--
+		case 6:
+			// LD r[y], n
+			reg, _ := z.regTableR(op.y)
+			(*reg) = z.Mem.read8Inc(&z.PC)
+		case 7:
+			// some accumulator operands
+		}
 	case 1:
 		// z=6 AND y=6 -> HALT
-		if o.z == 6 && o.y == 6 {
+		if op.z == 6 && op.y == 6 {
 			// HALT!!
 			log.Printf("HALT!")
 		}
@@ -78,8 +117,8 @@ func (z *Z80) Step() {
 		// 	LD r[y], r[z]
 
 		// lookup register
-		targetReg, targetName := z.codeToRegister(o.y)
-		sourceReg, sourceName := z.codeToRegister(o.z)
+		targetReg, targetName := z.regTableR(op.y)
+		sourceReg, sourceName := z.regTableR(op.z)
 
 		// apply load
 		*targetReg = *sourceReg
@@ -90,12 +129,29 @@ func (z *Z80) Step() {
 	case 2:
 		// ALU operation alu[y] with argument r[z]
 	case 3:
+		switch op.z {
+		case 0: // RET cc[y]
+		case 1:
+		case 2: // JP cc[y], nn
+		case 3:
+			switch op.y {
+			case 0: // JP nn
+				z.PC = z.Mem.read16(z.PC)
+			case 2: // OUT (n), A
+				log.Printf("OUT: %#02x -> %#02x", z.A, z.Mem.read8Inc(&z.PC))
+			}
+		case 4: // CALL cc[y], nn
+		case 5:
+		case 6: // ALU[y] n
+		case 7: // RST y*8
+			z.PC = uint16(op.y) * 8
+		}
 	}
 
 }
 
 // codeToRegister takes a bit-code and returns a pointer to the correct 8-bit register or memory address
-func (z *Z80) codeToRegister(code uint8) (*uint8, string) {
+func (z *Z80) regTableR(code uint8) (*uint8, string) {
 	switch code {
 	case 0:
 		return &z.B, "B"
@@ -116,6 +172,28 @@ func (z *Z80) codeToRegister(code uint8) (*uint8, string) {
 	}
 
 	return nil, ""
+}
+
+func (z *Z80) regTableRP(code uint8, withAF bool) (*reg16, string) {
+	switch code {
+	case 0:
+		return &z.BC, "BC"
+	case 1:
+		return &z.DE, "DE"
+	case 2:
+		return &z.HL, "HL"
+	case 3:
+		if withAF {
+			return &z.AF, "AF"
+		}
+		return &z.SP, "SP"
+	}
+	return nil, ""
+}
+
+func (z *Z80) String() string {
+	return fmt.Sprintf("PC: %#04x SP: %#04x\n A: %#02x F: %#02x B: %#02x C: %#02x D: %#02x E: %#02x H: %#02x L: %#02x\nAF: %#04x BC: %#04x DE: %#04x HL: %#04x IX: %#04x IY: %#04x",
+		z.PC, z.SP.get(), z.A, z.F, z.B, z.C, z.D, z.E, z.H, z.L, z.AF.get(), z.BC.get(), z.DE.get(), z.HL.get(), z.IX.get(), z.IY.get())
 }
 
 // Operand describes a single operands actions
