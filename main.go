@@ -45,11 +45,6 @@ func readBinary(filename string) ([]byte, error) {
 }
 
 func mainLoop(code []byte) {
-	testReg := core.NewR8(0)
-	testReg.Get()
-	//var r core.r8 = core.NewR8(0)
-
-	//r6 := core.NewR16(&testReg, &testReg)
 
 	cpu := core.NewZ80()
 
@@ -57,7 +52,7 @@ func mainLoop(code []byte) {
 	cpu.Mem.Write(0x0000, &code)
 
 	// start with PC at 0x0000
-	cpu.PC = 0x0000
+	*cpu.PC = 0x0000
 
 	//log.Printf("%s", cpu.Mem.Dump(0x0000, 0x1000))
 	// infinite loop for procesing operands

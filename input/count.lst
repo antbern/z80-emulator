@@ -1,0 +1,52 @@
+Z80 Module Assembler 2.8.2, (c) InterLogic 1993-2009, Paulo Custodio 2011-2015                    Sun Jan 01 22:06:24 2017
+Page 001                                                           'C:\Users\Anton\Dropbox\Projekt\Z80\ASM\count\main.lst'
+
+
+1     0000              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+2     0000              ;;           CONSTANTS            ;;
+3     0000              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+4     0000              DEFC OUT_PORT 		= $00
+5     0000              DEFC STACK_LOCATION = $f000
+6     0000              
+7     0000              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+8     0000              ;;             CODE               ;;
+9     0000              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+10    0000              
+11    0000              ; Excecution starts here
+12    0000              ORG $0000
+13    0000  31 00 F0    	ld sp, STACK_LOCATION; set up stack pointer
+14    0003              
+15    0003              loop:
+16    0003  D3 00       	out (OUT_PORT), a	;	output A on port
+17    0005  3C          	inc a				;	incerement a
+18    0006              	;call pause
+19    0006              	;call pause
+20    0006              	;call pause
+21    0006  C3 03 00    	jp loop				;	loop to loop
+22    0009              
+23    0009              
+24    0009              
+25    0009              
+26    0009              
+27    0009              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+28    0009              ;;	waits using a loop
+29    0009              ;;	affects b
+30    0009              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+31    0009              pause:
+32    0009  06 FF       	ld b, $ff
+33    000B              pause_loop:
+34    000B  10 FE       	djnz pause_loop
+35    000D              
+36    000D  C9          	ret
+37    000E              
+38    000E              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+39    000E              ;;           VARIABLES            ;;
+40    000E              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+41    000E              
+42    000E              ; Defining a 'variable' (space in ram)
+43    000E              ;data:
+44    000E              ;	defb $ff
+45    000E              
+46    000E              
+47    000E              
+
