@@ -58,6 +58,21 @@ func (ram *RAM) ptr8(addr uint16) *uint8 {
 	return &ram.data[addr]
 }
 
+/// Functions for pushing/popping registers to/from the stack
+func (ram *RAM) stackPush16(sp R16, src R16) {
+	*sp--
+	ram.data[*sp] = uint8(*src >> 8)
+	*sp--
+	ram.data[*sp] = uint8(*src & 0xff)
+}
+
+func (ram *RAM) stackPop16(sp R16, dst R16) {
+	*dst = uint16(ram.data[*sp])
+	*sp++
+	*dst |= uint16(ram.data[*sp]) << 8
+	*sp++
+}
+
 // Dump prints the RAM contents to the provided writer
 func (ram *RAM) Dump(start, length uint16) string {
 	return hex.Dump(ram.data[start : start+length])

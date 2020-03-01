@@ -3,7 +3,12 @@ package core
 import (
 	"fmt"
 	"log"
+
+	"github.com/antbern/z80-emulator/io"
 )
+
+// a lookup table to be used when evaluating conditional call/jump op codes
+var condTable = []Condition{NonZero, Zero, NoCarry, Carry, ParityOdd, ParityEven, SignPos, SignNeg}
 
 // Z80 contains all internal registers and such for the Z80 processor
 type Z80 struct {
@@ -11,6 +16,7 @@ type Z80 struct {
 	SP      R16
 	PC      R16
 	Mem     *RAM
+	IO      io.Device
 }
 
 // NewZ80 creates a new Z80 CPU instance with memory, and registers
@@ -35,17 +41,18 @@ func (z *Z80) Step() {
 		op := parseOP(z.Mem.read8Inc(z.PC))
 		reg, _ := z.regTableR(op.z)
 		switch op.x {
-		case 0: // rot[y] r[z]
-		case 1: // BIT y, r[z]: Z = NOT bit y in r[z]
+		case 0: // TODO: rot[y] r[z]
+		case 1: // TODO: BIT y, r[z]: Z = NOT bit y in r[z]
 		case 2: // RES y, r[z]
 			*reg &^= (1 << op.y)
 		case 3: // SET y, r[z]
 			*reg |= (1 << op.y)
 		}
-
+		// don't continue parsing
+		return
 	}
 
-	// parse operands
+	// normal op-code, parse operands
 	op := parseOP(opCode)
 	log.Printf("Operand: %#x -> %+v", opCode, op)
 
@@ -54,6 +61,24 @@ func (z *Z80) Step() {
 	case 0:
 		switch op.z {
 		case 0:
+			switch op.y {
+			case 0: // NOP
+			case 1: // TODO: EX AF, AF'
+			case 2: // DJNZ d
+				// decrement B
+				*z.R.B--
+				// read displacement byte (even though we might not need to, but we need to increment PC anyway)
+				disp := z.Mem.read8Inc(z.PC)
+				if *z.R.B > 0 { // if B is not yet zero, jump
+					*z.PC += uint16(disp)
+				}
+			case 3: // JR d
+				// read displacement byte
+				disp := z.Mem.read8Inc(z.PC)
+				*z.PC += uint16(disp)
+			case 4, 5, 6, 7: // JR cc[y-4], d
+
+			}
 		case 1:
 			reg, _ := z.regTableRP(op.p, false)
 			if op.q == 0 {
@@ -106,22 +131,69 @@ func (z *Z80) Step() {
 		log.Printf("LD %s, %s", targetName, sourceName)
 
 	case 2:
-		// ALU operation alu[y] with argument r[z]
+		// TODO: ALU operation alu[y] with argument r[z]
 	case 3:
 		switch op.z {
-		case 0: // RET cc[y]
+		case 0: // TODO: RET cc[y]
 		case 1:
-		case 2: // JP cc[y], nn
+			if op.q == 0 { // POP rp2[p]
+				reg, _ := z.regTableRP(op.p, true)
+				z.Mem.stackPop16(z.SP, reg)
+				break
+			} else if op.q == 1 {
+				switch op.p {
+				case 0: // RET
+					z.Mem.stackPop16(z.SP, z.PC)
+				case 1: // TODO: EXX
+				case 2: // JP HL / JP (HL)
+					*z.PC = z.Mem.read16(*z.R.HL)
+				case 3: // LD SP, HL
+					*z.SP = *z.R.HL
+				}
+			}
+		case 2: // TODO: JP cc[y], nn
 		case 3:
 			switch op.y {
 			case 0: // JP nn
 				*z.PC = z.Mem.read16(*z.PC)
 			case 2: // OUT (n), A
-				log.Printf("OUT: %#02x -> %#02x", *z.R.A, z.Mem.read8Inc(z.PC))
+				addr := z.Mem.read8Inc(z.PC)
+				if z.IO != nil {
+					z.IO.Write(addr, *z.R.A)
+				}
+			case 3: // IN A, (n)
+				addr := z.Mem.read8Inc(z.PC)
+				if z.IO != nil {
+					*z.R.A = z.IO.Read(addr)
+				}
+			case 4: // TODO: EX (SP), HL
+			case 5: // TODO: EX DE, HL
+			case 6: // TODO: DI
+			case 7: // TODO: EI
 			}
 		case 4: // CALL cc[y], nn
+			if condTable[op.y].isTrue(z.R.F) {
+				// read adress to call
+				addr := z.Mem.read16Inc(z.PC)
+				//push return pointer to the stack
+				z.Mem.stackPush16(z.SP, z.PC)
+				// move PC
+				*z.PC = addr
+			}
 		case 5:
-		case 6: // ALU[y] n
+			if op.q == 0 { // PUSH rp2[p]
+				reg, _ := z.regTableRP(op.p, true)
+				z.Mem.stackPush16(z.SP, reg)
+				break
+			} else if op.q == 1 && op.p == 0 { // CALL nn
+				addr := z.Mem.read16Inc(z.PC)
+				log.Printf("CALL to %#04x", addr)
+				//push return pointer to the stack
+				z.Mem.stackPush16(z.SP, z.PC)
+				// move PC
+				*z.PC = addr
+			}
+		case 6: // TODO: ALU[y] n
 		case 7: // RST y*8
 			*z.PC = uint16(op.y) * 8
 		}

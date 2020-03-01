@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/antbern/z80-emulator/core"
+	"github.com/antbern/z80-emulator/io"
 )
 
 func main() {
@@ -47,6 +48,7 @@ func readBinary(filename string) ([]byte, error) {
 func mainLoop(code []byte) {
 
 	cpu := core.NewZ80()
+	cpu.IO = io.DebugDevice{}
 
 	//data := []uint8{0x01, 0x02, 0x30}
 	cpu.Mem.Write(0x0000, &code)

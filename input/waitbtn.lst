@@ -1,0 +1,37 @@
+Z80 Module Assembler 2.8.2, (c) InterLogic 1993-2009, Paulo Custodio 2011-2015                    Mon Nov 21 21:42:51 2016
+Page 001                                                           'C:\Users\Anton\Dropbox\Z80\ASM\waitbtn\main_stack.lst'
+
+
+1     0000              ;Set up Stack Ponter
+2     0000  31 40 00    	ld SP, $0040 ; set stack pointer to 64
+3     0003              
+4     0003              	; Set A to output, all others as inputs, mode 0
+5     0003  3E 8B       	ld a, $8B;(11010001)
+6     0005  D3 03       	out ($03), a
+7     0007              
+8     0007  CD 16 00    	call waitpress
+9     000A              
+10    000A  D3 00       	out ($00), a	; write read contents to port A of 8255
+11    000C              
+12    000C              	; Wait aprox. 1s (500hz clock)
+13    000C  06 28       	ld b, $28 		; load 0x28 to b
+14    000E              waitloop:
+15    000E  10 FE       	djnz waitloop	; loop unil b == 0, causes wait
+16    0010              
+17    0010  3E 00       	ld a, 00
+18    0012  D3 00       	out($00), a		; clear port A contents (write all low)
+19    0014              
+20    0014  18 00       	jr	waitpress		; jump to loop again
+21    0016              
+22    0016              
+23    0016              ;; Waits for a buttonpress
+24    0016              ;; Modifies a
+25    0016              ;; Leaves read content i a
+26    0016              waitpress:
+27    0016  DB 01       	in a, ($01)		; read port B of 8255
+28    0018  CB 5F       	bit 3, a		; test bit 3, Z becomes the inverse of the bit
+29    001A  28 FA       	jr Z, waitpress	; go back to waitpress if Z is set (bit 3 not set, button not pressed)
+30    001C  C9          	ret
+31    001D              
+32    001D              
+
