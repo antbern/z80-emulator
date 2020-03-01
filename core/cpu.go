@@ -12,16 +12,42 @@ var condTable = []Condition{NonZero, Zero, NoCarry, Carry, ParityOdd, ParityEven
 
 // Z80 contains all internal registers and such for the Z80 processor
 type Z80 struct {
-	R, Ralt *regs
-	SP      R16
-	PC      R16
-	Mem     *RAM
-	IO      io.Device
+	// the 16 bit registers
+	AF, BC, DE, HL, IX, IY R16
+
+	// their high and low parts
+	A, F, B, C, D, E, H, L R8
+	IXL, IXH, IYL, IYH     R8
+
+	// and their alternatives
+	AFa, BCa, DEa, HLa R16
+
+	// the stack pointer and program counter
+	SP, PC R16
+
+	Mem *RAM
+	IO  io.Device
 }
 
 // NewZ80 creates a new Z80 CPU instance with memory, and registers
 func NewZ80() Z80 {
-	z80 := Z80{Mem: NewRAM(), R: newRegs(), Ralt: newRegs()}
+	z80 := Z80{Mem: NewRAM()}
+
+	// set up all the registers
+	z80.AF, z80.A, z80.F = NewR16()
+	z80.BC, z80.B, z80.C = NewR16()
+	z80.DE, z80.D, z80.E = NewR16()
+	z80.HL, z80.H, z80.L = NewR16()
+	z80.IX, z80.IXH, z80.IXL = NewR16()
+	z80.IY, z80.IYH, z80.IYL = NewR16()
+
+	// the alternatives
+	z80.AFa, _, _ = NewR16()
+	z80.BCa, _, _ = NewR16()
+	z80.DEa, _, _ = NewR16()
+	z80.HLa, _, _ = NewR16()
+
+	// and the stack pointer and program counter
 	z80.SP, _, _ = NewR16()
 	z80.PC, _, _ = NewR16()
 	return z80
@@ -33,8 +59,6 @@ func (z *Z80) Step() {
 	// read next operand and move PC forward
 	// opCode := uint8(0x58)
 	opCode := z.Mem.read8Inc(z.PC)
-
-	//c.Reg.PC.Set(c.Reg.PC.Get() + 1)
 
 	// TODO: check for prefixed multi-byte op codes
 	if opCode == 0xCB { // bit manipulations and roll/shift
@@ -66,10 +90,10 @@ func (z *Z80) Step() {
 			case 1: // TODO: EX AF, AF'
 			case 2: // DJNZ d
 				// decrement B
-				*z.R.B--
+				*z.B--
 				// read displacement byte (even though we might not need to, but we need to increment PC anyway)
 				disp := z.Mem.read8Inc(z.PC)
-				if *z.R.B > 0 { // if B is not yet zero, jump
+				if *z.B > 0 { // if B is not yet zero, jump
 					*z.PC += uint16(disp)
 				}
 			case 3: // JR d
@@ -86,7 +110,7 @@ func (z *Z80) Step() {
 				*reg = z.Mem.read16Inc(z.PC)
 			} else if op.q == 1 {
 				// ADD HL, rp[p]
-				*z.R.HL += *reg
+				*z.HL += *reg
 			}
 		case 2:
 		case 3:
@@ -146,9 +170,9 @@ func (z *Z80) Step() {
 					z.Mem.stackPop16(z.SP, z.PC)
 				case 1: // TODO: EXX
 				case 2: // JP HL / JP (HL)
-					*z.PC = z.Mem.read16(*z.R.HL)
+					*z.PC = z.Mem.read16(*z.HL)
 				case 3: // LD SP, HL
-					*z.SP = *z.R.HL
+					*z.SP = *z.HL
 				}
 			}
 		case 2: // TODO: JP cc[y], nn
@@ -159,12 +183,12 @@ func (z *Z80) Step() {
 			case 2: // OUT (n), A
 				addr := z.Mem.read8Inc(z.PC)
 				if z.IO != nil {
-					z.IO.Write(addr, *z.R.A)
+					z.IO.Write(addr, *z.A)
 				}
 			case 3: // IN A, (n)
 				addr := z.Mem.read8Inc(z.PC)
 				if z.IO != nil {
-					*z.R.A = z.IO.Read(addr)
+					*z.A = z.IO.Read(addr)
 				}
 			case 4: // TODO: EX (SP), HL
 			case 5: // TODO: EX DE, HL
@@ -172,7 +196,7 @@ func (z *Z80) Step() {
 			case 7: // TODO: EI
 			}
 		case 4: // CALL cc[y], nn
-			if condTable[op.y].isTrue(z.R.F) {
+			if condTable[op.y].isTrue(z.F) {
 				// read adress to call
 				addr := z.Mem.read16Inc(z.PC)
 				//push return pointer to the stack
@@ -205,21 +229,21 @@ func (z *Z80) Step() {
 func (z *Z80) regTableR(code uint8) (R8, string) {
 	switch code {
 	case 0:
-		return z.R.B, "B"
+		return z.B, "B"
 	case 1:
-		return z.R.C, "C"
+		return z.C, "C"
 	case 2:
-		return z.R.D, "D"
+		return z.D, "D"
 	case 3:
-		return z.R.E, "E"
+		return z.E, "E"
 	case 4:
-		return z.R.H, "H"
+		return z.H, "H"
 	case 5:
-		return z.R.L, "L"
+		return z.L, "L"
 	case 6:
-		return z.Mem.ptr8(*z.R.HL), "(HL)"
+		return z.Mem.ptr8(*z.HL), "(HL)"
 	case 7:
-		return z.R.A, "A"
+		return z.A, "A"
 	}
 
 	return nil, ""
@@ -228,14 +252,14 @@ func (z *Z80) regTableR(code uint8) (R8, string) {
 func (z *Z80) regTableRP(code uint8, withAF bool) (R16, string) {
 	switch code {
 	case 0:
-		return z.R.BC, "BC"
+		return z.BC, "BC"
 	case 1:
-		return z.R.DE, "DE"
+		return z.DE, "DE"
 	case 2:
-		return z.R.HL, "HL"
+		return z.HL, "HL"
 	case 3:
 		if withAF {
-			return z.R.AF, "AF"
+			return z.AF, "AF"
 		}
 		return z.SP, "SP"
 	}
@@ -244,7 +268,7 @@ func (z *Z80) regTableRP(code uint8, withAF bool) (R16, string) {
 
 func (z *Z80) String() string {
 	return fmt.Sprintf("PC: %#04x SP: %#04x\n A: %#02x F: %#02x B: %#02x C: %#02x D: %#02x E: %#02x H: %#02x L: %#02x\nAF: %#04x BC: %#04x DE: %#04x HL: %#04x IX: %#04x IY: %#04x",
-		*z.PC, *z.SP, *z.R.A, *z.R.F, *z.R.B, *z.R.C, *z.R.D, *z.R.E, *z.R.H, *z.R.L, *z.R.AF, *z.R.BC, *z.R.DE, *z.R.HL, *z.R.IX, *z.R.IY)
+		*z.PC, *z.SP, *z.A, *z.F, *z.B, *z.C, *z.D, *z.E, *z.H, *z.L, *z.AF, *z.BC, *z.DE, *z.HL, *z.IX, *z.IY)
 }
 
 // OP splits an op-code into its different parts according to the description in http://www.z80.info/decoding.htm
