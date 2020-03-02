@@ -25,13 +25,17 @@ type Z80 struct {
 	// the stack pointer and program counter
 	SP, PC R16
 
+	// memory and IO device
 	Mem *RAM
 	IO  io.Device
+
+	// internal flags
+	Halted bool
 }
 
 // NewZ80 creates a new Z80 CPU instance with memory, and registers
 func NewZ80() Z80 {
-	z80 := Z80{Mem: NewRAM()}
+	z80 := Z80{Mem: NewRAM(), Halted: false}
 
 	// set up all the registers
 	z80.AF, z80.A, z80.F = NewR16()
@@ -55,6 +59,9 @@ func NewZ80() Z80 {
 
 // Step causes the CPU to handle the next instruction
 func (z *Z80) Step() {
+	if z.Halted {
+		return
+	}
 
 	// read next operand and move PC forward
 	// opCode := uint8(0x58)
@@ -63,7 +70,7 @@ func (z *Z80) Step() {
 	// TODO: check for prefixed multi-byte op codes
 	if opCode == 0xCB { // bit manipulations and roll/shift
 		op := parseOP(z.Mem.read8Inc(z.PC))
-		reg, _ := z.regTableR(op.z)
+		reg := z.regTableR(op.z)
 		switch op.x {
 		case 0: // TODO: rot[y] r[z]
 		case 1: // TODO: BIT y, r[z]: Z = NOT bit y in r[z]
@@ -78,11 +85,11 @@ func (z *Z80) Step() {
 
 	// normal op-code, parse operands
 	op := parseOP(opCode)
-	log.Printf("Operand: %#x -> %+v", opCode, op)
+	log.Printf("Operand: %#02x -> %+v", opCode, op)
 
 	// handle the op-codes using a giant switch matrix
 	switch op.x {
-	case 0:
+	case 0: // x
 		switch op.z {
 		case 0:
 			switch op.y {
@@ -91,20 +98,21 @@ func (z *Z80) Step() {
 			case 2: // DJNZ d
 				// decrement B
 				*z.B--
-				// read displacement byte (even though we might not need to, but we need to increment PC anyway)
-				disp := z.Mem.read8Inc(z.PC)
 				if *z.B > 0 { // if B is not yet zero, jump
-					*z.PC += uint16(disp)
+					disp := z.Mem.read8Inc(z.PC)
+					*z.PC += uint16(int8(disp))
+				} else {
+					*z.PC++ // increment PC to skip the displacement byte (no jump performed)
 				}
 			case 3: // JR d
-				// read displacement byte
+				// read displacement byte and add it to PC (not handling of signed/unsigned numbers!)
 				disp := z.Mem.read8Inc(z.PC)
-				*z.PC += uint16(disp)
+				*z.PC += uint16(int8(disp))
 			case 4, 5, 6, 7: // JR cc[y-4], d
 
 			}
 		case 1:
-			reg, _ := z.regTableRP(op.p, false)
+			reg := z.regTableRP(op.p, false)
 			if op.q == 0 {
 				// LD rp[p], nn
 				*reg = z.Mem.read16Inc(z.PC)
@@ -114,7 +122,7 @@ func (z *Z80) Step() {
 			}
 		case 2:
 		case 3:
-			reg, _ := z.regTableRP(op.p, false)
+			reg := z.regTableRP(op.p, false)
 			if op.q == 0 {
 				*reg++
 			} else if op.q == 1 {
@@ -122,46 +130,39 @@ func (z *Z80) Step() {
 			}
 		case 4:
 			// INC r[y]
-			reg, _ := z.regTableR(op.y)
+			reg := z.regTableR(op.y)
 			(*reg)++
 		case 5:
 			// DEC r[y]
-			reg, _ := z.regTableR(op.y)
+			reg := z.regTableR(op.y)
 			(*reg)--
 		case 6:
 			// LD r[y], n
-			reg, _ := z.regTableR(op.y)
+			reg := z.regTableR(op.y)
 			*reg = z.Mem.read8Inc(z.PC)
 		case 7:
 			// some accumulator operands
 		}
-	case 1:
+	case 1: // x
 		// z=6 AND y=6 -> HALT
 		if op.z == 6 && op.y == 6 {
 			// HALT!!
 			log.Printf("HALT!")
+			z.Halted = true
+			break
 		}
-
 		// 	LD r[y], r[z]
-
-		// lookup register
-		targetReg, targetName := z.regTableR(op.y)
-		sourceReg, sourceName := z.regTableR(op.z)
-
-		// apply load
-		*targetReg = *sourceReg
-
-		// print debug message
-		log.Printf("LD %s, %s", targetName, sourceName)
-
-	case 2:
+		dst := z.regTableR(op.y)
+		src := z.regTableR(op.z)
+		*dst = *src
+	case 2: // x
 		// TODO: ALU operation alu[y] with argument r[z]
-	case 3:
+	case 3: // x
 		switch op.z {
 		case 0: // TODO: RET cc[y]
 		case 1:
 			if op.q == 0 { // POP rp2[p]
-				reg, _ := z.regTableRP(op.p, true)
+				reg := z.regTableRP(op.p, true)
 				z.Mem.stackPop16(z.SP, reg)
 				break
 			} else if op.q == 1 {
@@ -206,12 +207,12 @@ func (z *Z80) Step() {
 			}
 		case 5:
 			if op.q == 0 { // PUSH rp2[p]
-				reg, _ := z.regTableRP(op.p, true)
+				reg := z.regTableRP(op.p, true)
 				z.Mem.stackPush16(z.SP, reg)
 				break
 			} else if op.q == 1 && op.p == 0 { // CALL nn
 				addr := z.Mem.read16Inc(z.PC)
-				log.Printf("CALL to %#04x", addr)
+				log.Printf("CALL to %#04X", addr)
 				//push return pointer to the stack
 				z.Mem.stackPush16(z.SP, z.PC)
 				// move PC
@@ -226,44 +227,44 @@ func (z *Z80) Step() {
 }
 
 // codeToRegister takes a bit-code and returns a pointer to the correct 8-bit register or memory address
-func (z *Z80) regTableR(code uint8) (R8, string) {
+func (z *Z80) regTableR(code uint8) R8 {
 	switch code {
 	case 0:
-		return z.B, "B"
+		return z.B
 	case 1:
-		return z.C, "C"
+		return z.C
 	case 2:
-		return z.D, "D"
+		return z.D
 	case 3:
-		return z.E, "E"
+		return z.E
 	case 4:
-		return z.H, "H"
+		return z.H
 	case 5:
-		return z.L, "L"
+		return z.L
 	case 6:
-		return z.Mem.ptr8(*z.HL), "(HL)"
+		return z.Mem.ptr8(*z.HL)
 	case 7:
-		return z.A, "A"
+		return z.A
 	}
 
-	return nil, ""
+	return nil
 }
 
-func (z *Z80) regTableRP(code uint8, withAF bool) (R16, string) {
+func (z *Z80) regTableRP(code uint8, withAF bool) R16 {
 	switch code {
 	case 0:
-		return z.BC, "BC"
+		return z.BC
 	case 1:
-		return z.DE, "DE"
+		return z.DE
 	case 2:
-		return z.HL, "HL"
+		return z.HL
 	case 3:
 		if withAF {
-			return z.AF, "AF"
+			return z.AF
 		}
-		return z.SP, "SP"
+		return z.SP
 	}
-	return nil, ""
+	return nil
 }
 
 func (z *Z80) String() string {

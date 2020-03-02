@@ -1,0 +1,60 @@
+Z80 Module Assembler 2.8.2, (c) InterLogic 1993-2009, Paulo Custodio 2011-2015                    Wed Dec 14 23:15:54 2016
+
+1     0000              
+2     0000              
+3     0000  31 FF 00    	ld sp, $ff
+4     0003              
+5     0003  3E 07       	ld a, 7
+6     0005  D3 00       	out ($00), a
+7     0007              
+8     0007  CD 0D 00    	call sum
+9     000A              
+10    000A  D3 00       	out ($00), a
+11    000C              
+12    000C  76          	halt
+13    000D              
+14    000D              
+15    000D              	;Sums all whole numbers from a to 1
+16    000D              sum:
+17    000D  47          	ld b, a
+18    000E  05          	dec b
+19    000F              sum_loop:
+20    000F  80          	add a, b
+21    0010              	;out ($00), a
+22    0010  10 FD       	djnz sum_loop
+23    0012  C9          	ret
+24    0013              
+25    0013              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+26    0013              ;;	waits using a loop
+27    0013              ;;	affects b
+28    0013              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+29    0013              pause:
+30    0013              
+31    0013  06 FF       	ld b, 255
+32    0015              pause_loop:
+33    0015  10 FE       	djnz pause_loop
+34    0017              
+35    0017  C9          	ret
+36    0018              
+37    0018              	; Calculates the factorial (!) of the number given i a
+38    0018              ;factorial:
+39    0018              
+40    0018              
+41    0018              
+42    0018              ;	ret
+43    0018              
+44    0018              
+45    0018              ;	outer:
+46    0018              ;	ld a, $00
+47    0018              ;loop:
+48    0018              ;	inc a
+49    0018              ;	out ($00), a
+50    0018              
+51    0018              ;	cp 15
+52    0018              ;	jr nz, loop
+53    0018              ;	djnz outer
+54    0018              
+55    0018              ;	halt
+56    0018              	;jr loop
+57    0018              
+
