@@ -30,7 +30,7 @@ type Z80 struct {
 	IO  io.Device
 
 	// internal flags
-	Halted bool
+	Halted, InterruptEnabled bool
 }
 
 // NewZ80 creates a new Z80 CPU instance with memory, and registers
@@ -59,6 +59,7 @@ func NewZ80() Z80 {
 
 // Step causes the CPU to handle the next instruction
 func (z *Z80) Step() {
+	// TODO: for now, just don't do anything upon halted. Later: let interrupt resume execution
 	if z.Halted {
 		return
 	}
@@ -94,7 +95,8 @@ func (z *Z80) Step() {
 		case 0:
 			switch op.y {
 			case 0: // NOP
-			case 1: // TODO: EX AF, AF'
+			case 1: // EX AF, AF'
+				exchange16(z.AF, z.AFa)
 			case 2: // DJNZ d
 				// decrement B
 				*z.B--
@@ -105,39 +107,39 @@ func (z *Z80) Step() {
 					*z.PC++ // increment PC to skip the displacement byte (no jump performed)
 				}
 			case 3: // JR d
-				// read displacement byte and add it to PC (not handling of signed/unsigned numbers!)
+				// read displacement byte and add it to PC (note handling of signed/unsigned numbers!)
 				disp := z.Mem.read8Inc(z.PC)
 				*z.PC += uint16(int8(disp))
 			case 4, 5, 6, 7: // JR cc[y-4], d
-
+				if condTable[op.y-4].isTrue(z.F) {
+					disp := z.Mem.read8Inc(z.PC)
+					*z.PC += uint16(int8(disp))
+				} else {
+					*z.PC++ // increment PC to skip the displacement byte
+				}
 			}
 		case 1:
 			reg := z.regTableRP(op.p, false)
-			if op.q == 0 {
-				// LD rp[p], nn
+			if op.q == 0 { // LD rp[p], nn
 				*reg = z.Mem.read16Inc(z.PC)
-			} else if op.q == 1 {
-				// ADD HL, rp[p]
+			} else if op.q == 1 { // ADD HL, rp[p]
 				*z.HL += *reg
 			}
 		case 2:
 		case 3:
 			reg := z.regTableRP(op.p, false)
-			if op.q == 0 {
+			if op.q == 0 { // INC rp[p]
 				*reg++
-			} else if op.q == 1 {
+			} else if op.q == 1 { // DEC rp[p]
 				*reg--
 			}
-		case 4:
-			// INC r[y]
+		case 4: // INC r[y]
 			reg := z.regTableR(op.y)
-			(*reg)++
-		case 5:
-			// DEC r[y]
+			*reg++
+		case 5: // DEC r[y]
 			reg := z.regTableR(op.y)
-			(*reg)--
-		case 6:
-			// LD r[y], n
+			*reg--
+		case 6: // LD r[y], n
 			reg := z.regTableR(op.y)
 			*reg = z.Mem.read8Inc(z.PC)
 		case 7:
@@ -159,28 +161,39 @@ func (z *Z80) Step() {
 		// TODO: ALU operation alu[y] with argument r[z]
 	case 3: // x
 		switch op.z {
-		case 0: // TODO: RET cc[y]
+		case 0: // RET cc[y]
+			if condTable[op.y].isTrue(z.F) {
+				z.Mem.stackPop16(z.SP, z.PC)
+			}
 		case 1:
 			if op.q == 0 { // POP rp2[p]
 				reg := z.regTableRP(op.p, true)
 				z.Mem.stackPop16(z.SP, reg)
-				break
 			} else if op.q == 1 {
 				switch op.p {
 				case 0: // RET
 					z.Mem.stackPop16(z.SP, z.PC)
-				case 1: // TODO: EXX
+				case 1: // EXX
+					exchange16(z.BC, z.BCa)
+					exchange16(z.DE, z.DEa)
+					exchange16(z.HL, z.HLa)
 				case 2: // JP HL / JP (HL)
 					*z.PC = z.Mem.read16(*z.HL)
 				case 3: // LD SP, HL
 					*z.SP = *z.HL
 				}
 			}
-		case 2: // TODO: JP cc[y], nn
+		case 2: // JP cc[y], nn
+			if condTable[op.y].isTrue(z.F) {
+				*z.PC = z.Mem.read16(*z.PC)
+			} else {
+				*z.PC += 2 // increment PC to skip jump address
+			}
 		case 3:
 			switch op.y {
 			case 0: // JP nn
 				*z.PC = z.Mem.read16(*z.PC)
+			case 1: // CB prefix
 			case 2: // OUT (n), A
 				addr := z.Mem.read8Inc(z.PC)
 				if z.IO != nil {
@@ -191,32 +204,36 @@ func (z *Z80) Step() {
 				if z.IO != nil {
 					*z.A = z.IO.Read(addr)
 				}
-			case 4: // TODO: EX (SP), HL
-			case 5: // TODO: EX DE, HL
-			case 6: // TODO: DI
-			case 7: // TODO: EI
+			case 4: // EX (SP), HL
+				tmp := *z.HL
+				*z.HL = z.Mem.read16(*z.SP)
+				z.Mem.put16(*z.SP, tmp)
+			case 5: // EX DE, HL
+				exchange16(z.DE, z.HL)
+			case 6: // DI
+				z.InterruptEnabled = false
+			case 7: // EI
+				z.InterruptEnabled = true
 			}
 		case 4: // CALL cc[y], nn
 			if condTable[op.y].isTrue(z.F) {
-				// read adress to call
+				// read adress to call, push return pointer to the stack and move PC
 				addr := z.Mem.read16Inc(z.PC)
-				//push return pointer to the stack
 				z.Mem.stackPush16(z.SP, z.PC)
-				// move PC
 				*z.PC = addr
+			} else {
+				*z.PC += 2 // increment PC to skip jump address
 			}
 		case 5:
 			if op.q == 0 { // PUSH rp2[p]
 				reg := z.regTableRP(op.p, true)
 				z.Mem.stackPush16(z.SP, reg)
-				break
 			} else if op.q == 1 && op.p == 0 { // CALL nn
+				// read adress to call, push return pointer to the stack and move PC
 				addr := z.Mem.read16Inc(z.PC)
-				log.Printf("CALL to %#04X", addr)
-				//push return pointer to the stack
 				z.Mem.stackPush16(z.SP, z.PC)
-				// move PC
 				*z.PC = addr
+				log.Printf("CALL to %#04X", addr)
 			}
 		case 6: // TODO: ALU[y] n
 		case 7: // RST y*8
@@ -224,6 +241,11 @@ func (z *Z80) Step() {
 		}
 	}
 
+}
+
+// echanges / swaps the values of two R16 registers
+func exchange16(a, b R16) {
+	*a, *b = *b, *a
 }
 
 // codeToRegister takes a bit-code and returns a pointer to the correct 8-bit register or memory address

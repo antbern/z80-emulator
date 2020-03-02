@@ -10,6 +10,7 @@ Decoding instructions: http://www.z80.info/decoding.htm
 
 import (
 	"bufio"
+	"flag"
 	"io/ioutil"
 	"log"
 	"os"
@@ -20,8 +21,12 @@ import (
 )
 
 func main() {
+
+	fileName := flag.String("i", "input/monitor.bin", "The binary input file to load")
+	flag.Parse()
+
 	// read the contents of the binary into a byte slice
-	data, err := readBinary("input/count.bin")
+	data, err := readBinary(*fileName)
 
 	if err != nil {
 		log.Println("Error leading file: ", err)
