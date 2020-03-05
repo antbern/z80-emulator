@@ -4,8 +4,8 @@ import "testing"
 
 func TestExchange(t *testing.T) {
 	// and the stack pointer and program counter
-	A, _, _ := NewR16()
-	B, _, _ := NewR16()
+	A := NewR16Single()
+	B := NewR16Single()
 
 	*A = 0x55AA
 	*B = 0x4488

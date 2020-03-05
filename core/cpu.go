@@ -46,14 +46,14 @@ func NewZ80() Z80 {
 	z80.IY, z80.IYH, z80.IYL = NewR16()
 
 	// the alternatives
-	z80.AFa, _, _ = NewR16()
-	z80.BCa, _, _ = NewR16()
-	z80.DEa, _, _ = NewR16()
-	z80.HLa, _, _ = NewR16()
+	z80.AFa = NewR16Single()
+	z80.BCa = NewR16Single()
+	z80.DEa = NewR16Single()
+	z80.HLa = NewR16Single()
 
 	// and the stack pointer and program counter
-	z80.SP, _, _ = NewR16()
-	z80.PC, _, _ = NewR16()
+	z80.SP = NewR16Single()
+	z80.PC = NewR16Single()
 	return z80
 }
 
@@ -74,7 +74,8 @@ func (z *Z80) Step() {
 		reg := z.regTableR(op.z)
 		switch op.x {
 		case 0: // TODO: rot[y] r[z]
-		case 1: // TODO: BIT y, r[z]: Z = NOT bit y in r[z]
+		case 1: // BIT y, r[z]: Z = NOT bit y in r[z]
+			bit8(*reg, op.y, z.F)
 		case 2: // RES y, r[z]
 			*reg &^= (1 << op.y)
 		case 3: // SET y, r[z]
@@ -157,8 +158,23 @@ func (z *Z80) Step() {
 		dst := z.regTableR(op.y)
 		src := z.regTableR(op.z)
 		*dst = *src
-	case 2: // x
-		// TODO: ALU operation alu[y] with argument r[z]
+	case 2: // x: ALU operation alu[y] with argument r[z]
+		reg := z.regTableR(op.z)
+		switch op.y {
+		case 0: // ADD A, reg
+			*z.A = add8(*z.A, *reg, z.F, false)
+		case 1: // ADC A, reg
+			*z.A = add8(*z.A, *reg, z.F, true)
+		case 2: // SUB A, reg
+			*z.A = sub8(*z.A, *reg, z.F, false)
+		case 3: // SBC A, reg
+			*z.A = sub8(*z.A, *reg, z.F, true)
+		case 4: // TODO: AND
+		case 5: // TODO: XOR
+		case 6: // TODO: OR
+		case 7: // CP i.e, A-r
+			sub8(*z.A, *reg, z.F, false)
+		}
 	case 3: // x
 		switch op.z {
 		case 0: // RET cc[y]
@@ -235,7 +251,23 @@ func (z *Z80) Step() {
 				*z.PC = addr
 				log.Printf("CALL to %#04X", addr)
 			}
-		case 6: // TODO: ALU[y] n
+		case 6: // ALU[y] n
+			n := z.Mem.read8Inc(z.PC)
+			switch op.y {
+			case 0: // ADD A, reg
+				*z.A = add8(*z.A, n, z.F, false)
+			case 1: // ADC A, reg
+				*z.A = add8(*z.A, n, z.F, true)
+			case 2: // SUB A, reg
+				*z.A = sub8(*z.A, n, z.F, false)
+			case 3: // SBC A, reg
+				*z.A = sub8(*z.A, n, z.F, true)
+			case 4: // TODO: AND
+			case 5: // TODO: XOR
+			case 6: // TODO: OR
+			case 7: // CP i.e, A-n
+				sub8(*z.A, n, z.F, false)
+			}
 		case 7: // RST y*8
 			*z.PC = uint16(op.y) * 8
 		}
