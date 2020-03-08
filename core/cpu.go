@@ -83,6 +83,15 @@ func (z *Z80) Step() {
 		}
 		// don't continue parsing
 		return
+	} else if opCode == 0xED {
+		op := parseOP(z.Mem.read8Inc(z.PC))
+		if op.x == 1 {
+			// TODO: lots of operations
+		} else if op.x == 2 {
+			// TODO: bli[y,z] block instruction
+		}
+		// don't continue parsing
+		return
 	}
 
 	// normal op-code, parse operands
@@ -126,7 +135,34 @@ func (z *Z80) Step() {
 			} else if op.q == 1 { // ADD HL, rp[p]
 				*z.HL += *reg
 			}
-		case 2:
+		case 2: // TODO: Indirect loading
+
+			if op.p == 2 { // LD (HL), nn and LD (nn), HL
+				nn := z.Mem.read16Inc(z.PC)
+				if op.q == 0 {
+					z.Mem.put16(nn, *z.HL)
+				} else if op.q == 1 {
+					*z.HL = z.Mem.read16(nn)
+				}
+				// we're done
+				break
+			}
+
+			var b R8
+			switch op.p {
+			case 0:
+				b = z.Mem.ptr8(*z.BC)
+			case 1:
+				b = z.Mem.ptr8(*z.DE)
+			case 3:
+				b = z.Mem.ptr8(z.Mem.read16Inc(z.PC))
+			}
+			// perform load in either direction based on q
+			if op.q == 0 {
+				*b = *z.A
+			} else if op.q == 1 {
+				*z.A = *b
+			}
 		case 3:
 			reg := z.regTableRP(op.p, false)
 			if op.q == 0 { // INC rp[p]
@@ -144,7 +180,7 @@ func (z *Z80) Step() {
 			reg := z.regTableR(op.y)
 			*reg = z.Mem.read8Inc(z.PC)
 		case 7:
-			// some accumulator operands
+			// TODO: some accumulator operands
 		}
 	case 1: // x
 		// z=6 AND y=6 -> HALT
@@ -169,9 +205,12 @@ func (z *Z80) Step() {
 			*z.A = sub8(*z.A, *reg, z.F, false)
 		case 3: // SBC A, reg
 			*z.A = sub8(*z.A, *reg, z.F, true)
-		case 4: // TODO: AND
-		case 5: // TODO: XOR
-		case 6: // TODO: OR
+		case 4: // AND A, reg
+			*z.A = and8(*z.A, *reg, z.F)
+		case 5: // XOR A, reg
+			*z.A = xor8(*z.A, *reg, z.F)
+		case 6: // OR A, reg
+			*z.A = or8(*z.A, *reg, z.F)
 		case 7: // CP i.e, A-r
 			sub8(*z.A, *reg, z.F, false)
 		}
@@ -252,21 +291,24 @@ func (z *Z80) Step() {
 				log.Printf("CALL to %#04X", addr)
 			}
 		case 6: // ALU[y] n
-			n := z.Mem.read8Inc(z.PC)
+			nn := z.Mem.read8Inc(z.PC)
 			switch op.y {
-			case 0: // ADD A, reg
-				*z.A = add8(*z.A, n, z.F, false)
-			case 1: // ADC A, reg
-				*z.A = add8(*z.A, n, z.F, true)
-			case 2: // SUB A, reg
-				*z.A = sub8(*z.A, n, z.F, false)
-			case 3: // SBC A, reg
-				*z.A = sub8(*z.A, n, z.F, true)
-			case 4: // TODO: AND
-			case 5: // TODO: XOR
-			case 6: // TODO: OR
-			case 7: // CP i.e, A-n
-				sub8(*z.A, n, z.F, false)
+			case 0: // ADD A, nn
+				*z.A = add8(*z.A, nn, z.F, false)
+			case 1: // ADC A, nn
+				*z.A = add8(*z.A, nn, z.F, true)
+			case 2: // SUB A, nn
+				*z.A = sub8(*z.A, nn, z.F, false)
+			case 3: // SBC A, nn
+				*z.A = sub8(*z.A, nn, z.F, true)
+			case 4: // AND A, nn
+				*z.A = and8(*z.A, nn, z.F)
+			case 5: // XOR A, nn
+				*z.A = xor8(*z.A, nn, z.F)
+			case 6: // OR A, nn
+				*z.A = or8(*z.A, nn, z.F)
+			case 7: // CP i.e, A-nn
+				sub8(*z.A, nn, z.F, false)
 			}
 		case 7: // RST y*8
 			*z.PC = uint16(op.y) * 8

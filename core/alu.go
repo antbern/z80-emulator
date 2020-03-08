@@ -1,5 +1,7 @@
 package core
 
+import "math/bits"
+
 // This file contains implementations for all the ALU (Arithmetic Logic Unit) operations
 // and handles correct setting and testing of flag register flags
 
@@ -146,6 +148,37 @@ func bit8(a, bit uint8, F R8) {
 
 	// reset the add/sub flag
 	*F &^= FlagN
+}
+
+// and8 performs a logical AND between a and b and sets the flags accordingly
+func and8(a, b uint8, F R8) uint8 {
+	return _bitwiseFlagSet(a&b, F)
+}
+
+// or8 performs a logical OR between a and b and sets the flags accordingly
+func or8(a, b uint8, F R8) uint8 {
+	return _bitwiseFlagSet(a|b, F)
+}
+
+// xor8 performs a logical XOR between a and b and sets the flags accordingly
+func xor8(a, b uint8, F R8) uint8 {
+	return _bitwiseFlagSet(a^b, F)
+}
+
+func _bitwiseFlagSet(result uint8, F R8) uint8 {
+	// copy the sign flag from res
+	*F = (*F &^ FlagS) | (((result & (1 << 7)) >> 7) << FlagSshift)
+
+	// set the zero flag correctly
+	*F = (*F &^ FlagZ) | (isZero(result) << FlagZshift)
+
+	// reset N and C, and set H
+	*F = (*F &^ (FlagN | FlagC)) | FlagH
+
+	// set the parity flag depending on result
+	*F = (*F &^ FlagP) | ((^(uint8(bits.OnesCount8(result)) % 2) & 1) << FlagPshift)
+
+	return result
 }
 
 /*
