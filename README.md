@@ -19,6 +19,7 @@ Features that still need to be implementated
 * Interrupts
 * SIO console
 * Interactive mode and its triggers
+* More CP/M BDOS functions
 
 
 ## Interactive Mode

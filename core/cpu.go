@@ -31,11 +31,14 @@ type Z80 struct {
 
 	// internal flags
 	Halted, InterruptEnabled bool
+
+	// EnableBDOS controls whether or not a CALL 5 will act as normal or go to the CP/M BDOS
+	EnableBDOS bool
 }
 
 // NewZ80 creates a new Z80 CPU instance with memory, and registers
 func NewZ80() Z80 {
-	z80 := Z80{Mem: NewRAM(), Halted: false}
+	z80 := Z80{Mem: NewRAM(), Halted: false, EnableBDOS: false}
 
 	// set up all the registers
 	z80.AF, z80.A, z80.F = NewR16()
@@ -274,6 +277,10 @@ func (z *Z80) Step() {
 			if condTable[op.y].isTrue(z.F) {
 				// read adress to call, push return pointer to the stack and move PC
 				addr := z.Mem.read16Inc(z.PC)
+				if z.EnableBDOS && addr == 5 { // BDOS call
+					z.handleBDOS()
+					break
+				}
 				z.Mem.stackPush16(z.SP, z.PC)
 				*z.PC = addr
 			} else {
@@ -286,6 +293,10 @@ func (z *Z80) Step() {
 			} else if op.q == 1 && op.p == 0 { // CALL nn
 				// read adress to call, push return pointer to the stack and move PC
 				addr := z.Mem.read16Inc(z.PC)
+				if z.EnableBDOS && addr == 5 { // BDOS call
+					z.handleBDOS()
+					break
+				}
 				z.Mem.stackPush16(z.SP, z.PC)
 				*z.PC = addr
 				log.Printf("CALL to %#04X", addr)

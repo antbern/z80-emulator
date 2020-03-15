@@ -10,10 +10,12 @@ Decoding instructions: http://www.z80.info/decoding.htm
 
 import (
 	"bufio"
+	"encoding/hex"
 	"flag"
 	"io/ioutil"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/antbern/z80-emulator/core"
@@ -23,45 +25,45 @@ import (
 func main() {
 
 	fileName := flag.String("i", "input/monitor.bin", "The binary input file to load")
+	origin := flag.String("o", "0x0000", "The origin/base address of the code. Decides where the loaded file will be placed in memory")
 	flag.Parse()
 
-	// read the contents of the binary into a byte slice
-	data, err := readBinary(*fileName)
+	// parse the origin base address
+	baseAddr, err := strconv.ParseUint(*origin, 0, 16)
 
 	if err != nil {
-		log.Println("Error leading file: ", err)
+		log.Printf("Error parsing origin argument %v: %v\n", *origin, err)
 		return
 	}
 
-	log.Printf("Data: [%# x...", data[:16])
-
-	mainLoop(data)
-}
-
-func readBinary(filename string) ([]byte, error) {
-	log.Println("Loading file", filename)
-
-	data, err := ioutil.ReadFile(filename)
-
+	// read the contents of the binary into a byte slice
+	log.Println("Loading file", *fileName)
+	data, err := ioutil.ReadFile(*fileName)
 	if err != nil {
-		return nil, err
+		log.Println("Error loading file: ", err)
+		return
 	}
 
-	return data, nil
+	log.Printf("\n%s", hex.Dump(data[:64]))
+
+	mainLoop(data, uint16(baseAddr))
 }
 
-func mainLoop(code []byte) {
+func mainLoop(code []byte, origin uint16) {
 
 	cpu := core.NewZ80()
-	cpu.IO = io.NewDebugDevice()
+	cpu.IO = io.NewSIO(nil, nil)
 
-	//data := []uint8{0x01, 0x02, 0x30}
-	cpu.Mem.Write(0x0000, &code)
+	log.Printf("Writing loaded file (%v bytes) into memory at base address %#04x", len(code), origin)
+	cpu.Mem.Write(origin, &code)
 
-	// start with PC at 0x0000
-	*cpu.PC = 0x0000
+	// for the CP/M to know where the stack can start (used for zexdoc exerciser)
+	// cpu.Mem.Write(0x0006, &[]byte{0xff, 0x00})
+	// cpu.EnableBDOS = true
 
-	//log.Printf("%s", cpu.Mem.Dump(0x0000, 0x1000))
+	// start with PC at the origin for now since the rest is just zeroes
+	*cpu.PC = origin
+
 	// infinite loop for procesing operands
 	reader := bufio.NewReader(os.Stdin)
 	for {
@@ -77,6 +79,13 @@ func mainLoop(code []byte) {
 			}
 		case "q":
 			goto outside
+		case "o":
+			for {
+				cpu.Step()
+				if *cpu.PC == 0x04EC {
+					break
+				}
+			}
 		}
 
 		println(cpu.String())
